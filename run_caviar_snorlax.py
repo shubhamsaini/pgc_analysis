@@ -159,7 +159,7 @@ def main():
         PROGRESS("CAVIAR failed")
         return False
 
-    caviar_output = pd.read_csv("caviar.output_post", delim_whitespace=True)
+    caviar_output = pd.read_csv("caviar.output_%d_post"%(seed), delim_whitespace=True)
     caviar_output = caviar_output.merge(str_snp, left_on="SNP_ID", right_on="ID", how="left")
     caviar_output = caviar_output.sort_values(by=['Causal_Post._Prob.'], ascending=False)
     caviar_output = caviar_output.reset_index()
