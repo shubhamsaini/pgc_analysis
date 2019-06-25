@@ -11,6 +11,7 @@
 --window-kb 100
 ```
 
+# CAVIAR script to run on Lisa
 ```bash
 ./run_caviar_lisa.py \
 --str-vcf /nfs/gymrek/chr22/strs/pgc.strs.imputed.chr22.vcf.gz \
