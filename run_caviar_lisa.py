@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 
 Author: Shubham Saini
@@ -9,13 +9,13 @@ Run CAVIAR on SNP-STR GWAS results
 
 Example usage:
 ./run_caviar_lisa.py \
---str-vcf /storage/s1saini/manuscript_strsnp/fig3/hipstr.1kg/eur/chr22/hipstr.chr22.eur.vcf.gz\
---snp-vcf /storage/s1saini/caviar/snp_gt_files.list \
---str-assoc /storage/s1saini/caviar/str_assoc/pgc.chr22.assoc \
---snp-assoc /storage/s1saini/caviar/snp_assoc/chr22.snps.metal.txt \
---snp-rsid /storage/s1saini/caviar/snp_assoc/chr22.pos.rsid.txt \
+--str-vcf /nfs/gymrek/chr22/strs/pgc.strs.imputed.chr22.vcf.gz \
+--snp-vcf /home/gymrek/ssaini/caviar/chr22.files.list \
+--str-assoc /home/gymrek/ssaini/gwas/assoc_results/str_assoc/pgc.chr22.assoc \
+--snp-assoc /home/gymrek/ssaini/gwas/assoc_results/snp_assoc/chr22.snps.metal.txt \
+--snp-rsid /home/gymrek/ssaini/gwas/assoc_results/snp_assoc/chr22.pos.rsid.txt \
 --chrom 22 --pos 39975317 \
---window-kb 100
+--window-kb 10
 
 """
 
@@ -27,16 +27,20 @@ from cyvcf2 import VCF
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-from subprocess import Popen, PIPE, DEVNULL
 from collections import defaultdict
+
+from subprocess import Popen, PIPE, STDOUT
+
+try:
+    from subprocess import DEVNULL # py3k
+except ImportError:
+    import os
+    DEVNULL = open(os.devnull, 'wb')
 
 def PrintLine(text, f):
     f.write(text+"\n")
     f.flush()
 
-def PROGRESS(msg, printit=True):
-    if printit: # false for some messages when not in debug mode
-        sys.stderr.write("%s\n"%msg.strip())
 
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
@@ -79,13 +83,14 @@ def main():
 
     ### CAVIAR parameters
     seed = np.random.randint(100000)
-    ldfile = 'corr_mat_%d.txt'%(seed)
-    zfile = 'zscore_%d.csv'%(seed)
+    ldfile = 'caviar_files/corr_mat_%d.txt'%(seed)
+    zfile = 'caviar_files/zscore_%d.csv'%(seed)
     numcausal = "2"
-    outfile = "caviar.output_%d"%(seed)
+    outfile = "caviar_files/caviar.output_%d"%(seed)
 
-    PROGRESS('Seed %d'%(seed))
-    PROGRESS("Loading STR GWAS results")
+
+    PrintLine('Seed %d'%(seed), outf)
+    PrintLine("Loading STR GWAS results", outf)
 
     str_assoc_result = pd.read_csv(args.str_assoc, delim_whitespace=True)
     str_assoc_result = str_assoc_result[[str_assoc_result.columns.tolist()[i] for i in [0,1,3,2,6,4]]]
@@ -96,7 +101,7 @@ def main():
     str_assoc_result['P'] = str_assoc_result.P.astype('float')
     str_assoc_result = str_assoc_result.sort_values(by=['BP'])
 
-    PROGRESS("Loading SNP GWAS results")
+    PrintLine("Loading SNP GWAS results", outf)
 
     snp_assoc_result = pd.read_csv(args.snp_assoc, delim_whitespace=True)
     snp_pos_rsid = pd.read_csv(args.snp_rsid, delim_whitespace=True, names=["POS","MarkerName"])
@@ -118,25 +123,59 @@ def main():
     vcf = VCF(str_vcf_file, gts012=True)
     str_samples = vcf.samples
 
-    PROGRESS("Loading SNP genotypes")
-    gt_array = defaultdict(list)
+
+    region = '%d:%d-%d'%(CHROM,START,END)
+    cmd = "rm snp_files_rsid.txt"
+    p = Popen(cmd, shell=True, stdout=DEVNULL, stderr=DEVNULL)
+    output = p.communicate()[0]
+
+    for vcf_file_loc in snp_vcf_files:
+        cmd = "bcftools query -r "+region+" -f '%ID\n' "+vcf_file_loc+" >> snp_files_rsid.txt"
+        p = Popen(cmd, shell=True, stdout=DEVNULL, stderr=DEVNULL)
+        output = p.communicate()[0]
+        if p.returncode != 0:
+            print("Failed")
+
+    snp_all_rsid = set()
+    with open("snp_files_rsid.txt") as f:
+        for line in f:
+            snp_all_rsid.add(line.strip())
+
+    PrintLine("Loading SNP genotypes", outf)
     snps_rsid = set()
     str_rsid = set()
     samples = []
 
+    gt_array = defaultdict(list)
+    for rsid in snp_all_rsid:
+        if rsid in gwas_rsid:
+            gt_array[rsid] = []
+
     for vcf_file_loc in snp_vcf_files:
+        vcf_rsid = set()
         vcf = VCF(vcf_file_loc, gts012=True, samples = str_samples)
-        samples = samples + list(vcf.samples)
         for v in vcf('%d:%d-%d'%(CHROM,START,END)):
+            vcf_rsid.add(str(v.ID))
             if len(v.REF) == 1 and str(v.ID) in gwas_rsid:
                 gt = np.array(v.gt_types, dtype="float")
                 gt[gt==3] = np.nan
                 gt_array[str(v.ID)] = gt_array[str(v.ID)] + list(gt)
                 snps_rsid.add(str(v.ID))
 
-    gt_array = pd.DataFrame(gt_array, dtype="float")
+        samples = samples + list(vcf.samples)
+        not_found_rsid = snp_all_rsid.difference(vcf_rsid)
+        for rsid in not_found_rsid:
+            gt_array[rsid] = gt_array[rsid] + [np.nan]*len(vcf.samples)
 
-    PROGRESS("Loading STR genotypes")
+    for i in gt_array.keys():
+        if len(gt_array[i]) == 0:
+            del gt_array[i]
+
+    #print([len(gt_array[i]) for i in gt_array.keys()])
+    gt_array = pd.DataFrame(gt_array, dtype="float")
+    print(gt_array.shape)
+
+    PrintLine("Loading STR genotypes",outf)
     gt_array2 = defaultdict(list)
 
     vcf = VCF(str_vcf_file, gts012=True, samples=samples)
@@ -148,16 +187,17 @@ def main():
             str_rsid.add(str(v.ID))
 
     gt_array2 = pd.DataFrame(gt_array2, dtype="float")
+    print(gt_array2.shape)
 
-    PROGRESS("Writing LD file")
+    PrintLine("Writing LD file", outf)
     full_geno_matrix = pd.concat([gt_array, gt_array2], axis=1)
     full_geno_matrix = pd.DataFrame(full_geno_matrix, dtype="float")
-    corr_matrix = full_geno_matrix.corr().fillna(0)**2
+    corr_matrix = full_geno_matrix.corr().fillna(0)
     corr_matrix_array = corr_matrix.values
     np.savetxt(ldfile, corr_matrix_array, fmt='%.3f')
     print(corr_matrix.shape)
 
-    PROGRESS("Writing Z-score file")
+    PrintLine("Writing Z-score file", outf)
     pgc_snps_pval = snp_assoc_result
     pgc_snps = set(snps_rsid)
 
@@ -179,21 +219,24 @@ def main():
     str_snp_caviar.to_csv(zfile, sep="\t", index=False, header=False)
 
 
-    PROGRESS("Running CAVIAR")
-    cmd = "/storage/s1saini/caviar/caviar/CAVIAR-C++/CAVIAR -o %s -l %s -z %s -c %s"%(outfile, ldfile, zfile, numcausal)
+    PrintLine("Running CAVIAR", outf)
+    cmd = "/home/gymrek/ssaini/caviar/caviar/CAVIAR-C++/CAVIAR -o %s -l %s -z %s -c %s"%(outfile, ldfile, zfile, numcausal)
     p = Popen(cmd, shell=True, stdout=DEVNULL, stderr=DEVNULL)
     output = p.communicate()[0]
     if p.returncode != 0:
-        PROGRESS("CAVIAR failed")
+        PrintLine("CAVIAR failed", outf)
         return False
 
-    caviar_output = pd.read_csv("caviar.output_%d_post"%(seed), delim_whitespace=True)
+    caviar_output = pd.read_csv("caviar_files/caviar.output_%d_post"%(seed), delim_whitespace=True)
     caviar_output = caviar_output.merge(str_snp, left_on="SNP_ID", right_on="ID", how="left")
     caviar_output = caviar_output.sort_values(by=['Causal_Post._Prob.'], ascending=False)
     caviar_output = caviar_output.reset_index()
     caviar_output['index'] = caviar_output.index
 
+    print("============ Top Causal Variants ============")
     print(caviar_output.head())
+
+    print("============ Top STR Variants ============")
     print(caviar_output[caviar_output['vtype']=="STR"].head())
 
 if __name__ == "__main__":

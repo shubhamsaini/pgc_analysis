@@ -131,7 +131,7 @@ def main():
     PROGRESS("Writing LD file")
 
     df = pd.DataFrame(np.transpose(gt_array))
-    corr_matrix = df.corr().fillna(0)**2
+    corr_matrix = df.corr().fillna(0)
     corr_matrix = corr_matrix.values
     np.savetxt(ldfile, corr_matrix, fmt='%.3f')
     corr_matrix.shape
