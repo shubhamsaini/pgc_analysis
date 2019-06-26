@@ -18,7 +18,8 @@ Example usage:
 --window-kb 10
 
 """
-
+import matplotlib
+matplotlib.use('Agg')
 
 import argparse
 import sys
@@ -28,6 +29,8 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 from collections import defaultdict
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 from subprocess import Popen, PIPE, STDOUT
 
@@ -89,7 +92,7 @@ def main():
     outfile = "caviar_files/caviar.output_%d"%(seed)
 
 
-    PrintLine('Seed %d'%(seed), outf)
+    PrintLine('%d %d %d %d'%(seed, CHROM, START, END), outf)
     PrintLine("Loading STR GWAS results", outf)
 
     str_assoc_result = pd.read_csv(args.str_assoc, delim_whitespace=True)
@@ -139,7 +142,9 @@ def main():
     snp_all_rsid = set()
     with open("snp_files_rsid.txt") as f:
         for line in f:
-            snp_all_rsid.add(line.strip())
+            if line.strip() in gwas_rsid:
+                snp_all_rsid.add(line.strip())
+
 
     PrintLine("Loading SNP genotypes", outf)
     snps_rsid = set()
@@ -192,7 +197,9 @@ def main():
     PrintLine("Writing LD file", outf)
     full_geno_matrix = pd.concat([gt_array, gt_array2], axis=1)
     full_geno_matrix = pd.DataFrame(full_geno_matrix, dtype="float")
-    corr_matrix = full_geno_matrix.corr().fillna(0)
+    corr_matrix = full_geno_matrix.corr()#.fillna(0)
+    notnan_ids = list(corr_matrix.columns[np.logical_not(corr_matrix.isna().all().values)])
+    corr_matrix = corr_matrix.loc[notnan_ids, notnan_ids]
     corr_matrix_array = corr_matrix.values
     np.savetxt(ldfile, corr_matrix_array, fmt='%.3f')
     print(corr_matrix.shape)
@@ -238,6 +245,29 @@ def main():
 
     print("============ Top STR Variants ============")
     print(caviar_output[caviar_output['vtype']=="STR"].head())
+
+    fig_df = caviar_output.copy()
+    fig_df = fig_df[['index','BP','P','vtype']]
+    fig_df.loc[:,'logP'] = -np.log10(fig_df.P.values)
+
+    sns.set(style="darkgrid")
+    fig, ax = plt.subplots(figsize=(10,5))
+    ax = sns.scatterplot(x="BP", y="logP", hue="vtype", data=fig_df, ax=ax)
+    ax.legend(bbox_to_anchor=(1, 1), ncol=1)
+    xlabels = ['{:,.2f}'.format(x) + 'M' for x in ax.get_xticks()/1000000]
+    ax.set_xticklabels(xlabels)
+    ax.set_xlabel("BP")
+    ax.set_ylabel("-log10 P")
+    ax.set_title("Manhattan Plot %d:%d-%d"%(CHROM,START,END))
+    fig.savefig("output_figs/fig1_chr%d-%d-%d.png"%(CHROM,START,END))
+
+    fig, ax = plt.subplots(figsize=(10,5))
+    ax = sns.scatterplot(x="index", y="logP", hue="vtype", data=fig_df, ax=ax)
+    ax.legend(bbox_to_anchor=(1, 1), ncol=1)
+    ax.set_xlabel("CAVIAR Rank")
+    ax.set_ylabel("-log10 P")
+    ax.set_title("CAVIAR Rank vs. GWAS P-value %d:%d-%d"%(CHROM,START,END))
+    fig.savefig("output_figs/fig2_chr%d-%d-%d.png"%(CHROM,START,END))
 
 if __name__ == "__main__":
     main()
