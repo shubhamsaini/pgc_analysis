@@ -11,7 +11,8 @@ Example - PGC:
 --out stdout \
 --fam /home/gymrek/pgc_imputation/PGC_eur.fam \
 --sex --logistic --infer-snpstr --allele-tests --allele-tests-length \
---remove-rare-str-alleles 0.05
+--remove-rare-str-alleles 0.05 \
+--vcf-samples-delim "_"
 """
 
 # TODO
