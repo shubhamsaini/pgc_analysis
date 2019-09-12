@@ -33,7 +33,8 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import argparse
-import strtools.utils.common as common
+#import strtools.utils.common as common
+import common
 import numpy as np
 import pandas as pd
 from statsmodels.formula.api import logit
@@ -57,8 +58,8 @@ def GetAssocType(is_str, alt=-1, alt_len=-1, name=None):
     """
     if not is_str: return "SNP"
     else:
-        if alt >= 0: return "%s-alt-%s"%(name,alt)
-        elif alt_len >= 0: return "%s-length-%s"%(name,alt_len)
+        if alt != -1: return "%s-alt-%s"%(name,alt)
+        elif alt_len != -1: return "%s-length-%s"%(name,alt_len)
         elif not name is None: return name
         else: return "STR"
 
@@ -264,6 +265,7 @@ def main():
     inout_group.add_argument("--fam", help="FAM file with phenotype info", type=str)
     inout_group.add_argument("--samples", help="File with list of samples to include", type=str)
     inout_group.add_argument("--exclude-samples", help="File with list of samples to exclude", type=str)
+    inout_group.add_argument("--vcf-samples-delim", help="FID and IID delimiter in VCF", type=str)
     pheno_group = parser.add_argument_group("Phenotypes")
     pheno_group.add_argument("--pheno", help="Phenotypes file (to use instead of --fam)", type=str)
     pheno_group.add_argument("--mpheno", help="Use (n+2)th column from --pheno", type=int, default=1)
@@ -327,7 +329,10 @@ def main():
 
     # Set sample ID to FID_IID to match vcf
     common.MSG("Set up sample info")
-    pdata["sample"] = pdata.apply(lambda x: x["FID"]+"_"+x["IID"], 1)
+    if args.vcf_samples_delim is not None:
+        pdata["sample"] = pdata.apply(lambda x: x["FID"]+args.vcf_samples_delim+x["IID"], 1)
+    else:
+        pdata["sample"] = pdata.apply(lambda x: x["IID"], 1)
     reader_samples = set(reader.samples)
     pdata = pdata[pdata["sample"].apply(lambda x: x in reader_samples)]
     sample_order = list(pdata["sample"])
@@ -378,13 +383,23 @@ def main():
             for i in range(len(record.ALT)+1):
                 gts, exclude_samples = LoadGT(record, sample_order, is_str=True, use_alt_num=i)
                 pdata["GT"] = gts
-                assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=aaf, exclude_samples=exclude_samples, maxiter=args.max_iter)
+                if pdata.shape[0] == 0:
+                    continue
+                allele_maf = sum(pdata["GT"])*1.0/(2*pdata.shape[0])
+                if allele_maf == 0:
+                    continue
+                assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=allele_maf, exclude_samples=exclude_samples, maxiter=args.max_iter)
                 OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, alt=alleles[i], name=record.ID))
         if is_str and args.allele_tests_length:
             for length in set([len(record.REF)] + [len(alt) for alt in record.ALT]):
                 gts, exclude_samples = LoadGT(record, sample_order, is_str=True, use_alt_length=length)
                 pdata["GT"] = gts
-                assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=aaf, exclude_samples=exclude_samples, maxiter=args.max_iter)
+                if pdata.shape[0] == 0:
+                    continue
+                allele_maf = sum(pdata["GT"])*1.0/(2*pdata.shape[0])
+                if allele_maf == 0:
+                    continue
+                assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=allele_maf, exclude_samples=exclude_samples, maxiter=args.max_iter)
                 OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, alt_len=length, name=record.ID))
 
 if __name__ == "__main__":
