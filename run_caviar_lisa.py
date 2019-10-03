@@ -188,10 +188,11 @@ def main():
 
     vcf = VCF(str_vcf_file, gts012=True, samples=samples)
     for v in vcf('%d:%d-%d'%(CHROM,START,END)):
+        str_gt = []
         if str(v.ID) in gwas_rsid:
-            gt = np.array(v.gt_types, dtype="float")
-            gt[gt==3] = np.nan
-            gt_array2[str(v.ID)] = gt_array2[str(v.ID)] + list(gt)
+            for gt in v.gt_bases:
+                    str_gt.append(np.sum([len(i)-len(v.REF) for i in gt.split("|")]))
+                    gt_array2.append(str_gt)
             str_rsid.add(str(v.ID))
 
     gt_array2 = pd.DataFrame(gt_array2, dtype="float")
