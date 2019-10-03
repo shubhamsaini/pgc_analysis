@@ -192,8 +192,8 @@ def main():
         str_gt = []
         if str(v.ID) in gwas_rsid:
             for gt in v.gt_bases:
-                    str_gt.append(np.sum([len(i)-len(v.REF) for i in re.split('/|\|',gt)]))
-                    gt_array2.append(str_gt)
+                str_gt.append(np.sum([len(i)-len(v.REF) for i in re.split('/|\|',gt)]))
+            gt_array2[str(v.ID)] = str_gt
             str_rsid.add(str(v.ID))
 
     gt_array2 = pd.DataFrame(gt_array2, dtype="float")
