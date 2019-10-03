@@ -31,6 +31,7 @@ from scipy.stats import norm
 from collections import defaultdict
 import seaborn as sns
 import matplotlib.pyplot as plt
+import re
 
 from subprocess import Popen, PIPE, STDOUT
 
@@ -191,7 +192,7 @@ def main():
         str_gt = []
         if str(v.ID) in gwas_rsid:
             for gt in v.gt_bases:
-                    str_gt.append(np.sum([len(i)-len(v.REF) for i in gt.split("|")]))
+                    str_gt.append(np.sum([len(i)-len(v.REF) for i in re.split('/|\|',gt)]))
                     gt_array2.append(str_gt)
             str_rsid.add(str(v.ID))
 
