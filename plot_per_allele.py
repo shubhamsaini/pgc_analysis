@@ -32,6 +32,7 @@ def str2bool(v):
 def main():
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("--assoc", help="Argument 1 description", required=True, type=str)
+    parser.add_argument("--out-dir", help="Argument 1 description", required=False, type=str, default=".")
     args = parser.parse_args()
 
     data = pd.read_csv(args.assoc, delim_whitespace=True)
@@ -56,7 +57,7 @@ def main():
     for line in range(0,plot_data.shape[0]):
         plt.text(plot_data.len[line]+0.2, plot_data.odds[line], plot_data.af[line], horizontalalignment='left', color='black', weight='semibold')
     plt.title('chr%d:%d %s'%(data['CHROM'].values[0], data['BP'].values[0], data['SNP'].values[0].split("-")[0]))
-    fig.savefig(args.assoc+'.png')
+    fig.savefig(args.out_dir+"/"+args.assoc+'.png')
 
 if __name__ == "__main__":
     main()

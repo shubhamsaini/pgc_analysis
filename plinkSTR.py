@@ -11,8 +11,7 @@ Example - PGC:
 --out stdout \
 --fam /home/gymrek/pgc_imputation/PGC_eur.fam \
 --sex --logistic --infer-snpstr --allele-tests --allele-tests-length \
---remove-rare-str-alleles 0.05 \
---vcf-samples-delim "_"
+--remove-rare-str-alleles 0.05
 """
 
 # TODO
@@ -42,6 +41,11 @@ from statsmodels.formula.api import logit
 import statsmodels.api as sm
 import vcf
 
+def gp_position(j,k):
+    p1 = (k*(k+1)/2)+j
+    p2 = (j*(j+1)/2)+k
+    return int(max(p1,p2))
+
 def LoadCondition(vcffile, condition, sample_order):
     reader2 = vcf.Reader(open(vcffile, "rb"))
     chrom, start = condition.split(":")
@@ -49,8 +53,11 @@ def LoadCondition(vcffile, condition, sample_order):
     reader2.fetch(region)
     for record in reader2:
         print(record.start, int(start), record.ID)
-        if record.start==int(start):
-            return LoadGT(record, sample_order, is_str=False)
+        if record.POS==int(start):
+            is_str = True
+            if len(record.REF)==1 and len(record.ALT)==1 and len(record.ALT[0])==1:
+                is_str = False
+            return LoadGT(record, sample_order, is_str=is_str)
     common.ERROR("Could not find SNP to condition on")
 
 def GetAssocType(is_str, alt=-1, alt_len=-1, name=None):
@@ -89,7 +96,7 @@ def OutputAssoc(chrom, start, assoc, outf, assoc_type="STR"):
     - assoc_type (str): type of association
     """
     if assoc is None: return
-    items = [chrom, start, assoc_type, assoc["pval"], assoc["coef"], assoc["stderr"], assoc["CI"], assoc["maf"], assoc["N"],"CAG","CAGCAG"]
+    items = [chrom, start, assoc_type, assoc["pval"], assoc["coef"], assoc["stderr"], assoc["CI"], assoc["maf"], assoc["N"],assoc["REF"],assoc["ALT"]]
     outf.write("\t".join([str(item) for item in items])+"\n")
     outf.flush()
 
@@ -138,7 +145,7 @@ def PerformAssociation(data, covarcols, case_control=False, quant=True, maf=1.0,
         return None # TODO implement linear
     return assoc
 
-def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1, rmrare=0):
+def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1, rmrare=0, use_gp=False):
     """
     Load genotypes from a record and return values in the sample order
     Input:
@@ -156,6 +163,11 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
     exclude_samples = []
     alleles = [record.REF]+record.ALT
     afreqs = [(1-sum(record.aaf))]+record.aaf
+
+    if use_gp is True:
+        from itertools import combinations_with_replacement
+        alleles_lengths = [len(record.REF)]+[len(i) for i in record.ALT]
+        comb = list(combinations_with_replacement(range(len(alleles_lengths)), 2))
     for sample in record:
         if not is_str: # Note, code opposite to match plink results
             try:
@@ -185,7 +197,10 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
                         exclude_samples.append(sample.sample)
                         gtdata[sample.sample] = sum([len(record.REF) for item in sample.gt_alleles])
                     else:
-                        gtdata[sample.sample] = sum([len(alleles[int(item)]) for item in sample.gt_alleles])
+                        if use_gp is True:
+                            gtdata[sample.sample] = sum([(alleles_lengths[genotype[0]] + alleles_lengths[genotype[1]]) * sample['GP'][gp_position(genotype[0], genotype[1])] for genotype in comb])
+                        else:
+                            gtdata[sample.sample] = sum([len(alleles[int(item)]) for item in sample.gt_alleles])
                 except:
                     f1, f2 = [0,0]
                     exclude_samples.append(sample.sample)
@@ -288,6 +303,7 @@ def main():
     assoc_group.add_argument("--str-only", help="Used with --infer-snptr, only analyze STRs", action="store_true")
     assoc_group.add_argument("--remove-rare-str-alleles", help="Remove genotypes with alleles less than this freq", default=0.0, type=float)
     assoc_group.add_argument("--max-iter", help="Maximum number of iterations for logistic regression", default=100, type=int)
+    assoc_group.add_argument("--use-gp", help="Use GP field from Beagle output", action="store_true")
     fm_group = parser.add_argument_group("Fine mapping")
     fm_group.add_argument("--condition", help="Condition on this position chrom:start", type=str)
     args = parser.parse_args()
@@ -356,11 +372,14 @@ def main():
     common.MSG("Perform associations... with covars %s"%str(covarcols))
     if args.region: reader = reader.fetch(args.region)
     for record in reader:
+        if record.call_rate == 0:
+            continue
+
         # Check MAF
         aaf = sum(record.aaf)
         aaf = min([aaf, 1-aaf])
         if aaf < args.minmaf and args.minmaf != 1: continue
-        # Infer whether we should treat as a SNP or STR
+	# Infer whether we should treat as a SNP or STR
         is_str = True # by default, assume all data is STRs
         if args.infer_snpstr:
             if len(record.REF)==1 and len(record.ALT)==1 and len(record.ALT[0])==1:
@@ -369,12 +388,17 @@ def main():
             if not is_str and args.str_only: continue
         # Extract genotypes in sample order, perform regression, and output
         common.MSG("   Load genotypes...")
-        gts, exclude_samples = LoadGT(record, sample_order, is_str=is_str, rmrare=args.remove_rare_str_alleles)
+        gts, exclude_samples = LoadGT(record, sample_order, is_str=is_str, rmrare=args.remove_rare_str_alleles, use_gp = args.use_gp)
         pdata["GT"] = gts
         pdata["intercept"] = 1
         minmaf = args.minmaf
         common.MSG("   Perform association...")
         assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=aaf, exclude_samples=exclude_samples, maxiter=args.max_iter)
+        assoc["REF"] = str(record.REF)
+        if not is_str:
+            assoc["ALT"] = str(record.ALT[0])
+        else:
+            assoc["ALT"] = ",".join([str(i) for i in record.ALT])
         common.MSG("   Output association...")
         OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, name=record.ID))
         # Allele based tests
@@ -390,6 +414,8 @@ def main():
                 if allele_maf == 0:
                     continue
                 assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=allele_maf, exclude_samples=exclude_samples, maxiter=args.max_iter)
+                assoc["REF"] = str(record.REF)
+                assoc["ALT"] = alleles[i]
                 OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, alt=alleles[i], name=record.ID))
         if is_str and args.allele_tests_length:
             for length in set([len(record.REF)] + [len(alt) for alt in record.ALT]):
@@ -401,6 +427,8 @@ def main():
                 if allele_maf == 0:
                     continue
                 assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=allele_maf, exclude_samples=exclude_samples, maxiter=args.max_iter)
+                assoc["REF"] = "Length-%d"%(len(str(record.REF)))
+                assoc["ALT"] = "Length-%d"%(length)
                 OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, alt_len=length, name=record.ID))
 
 if __name__ == "__main__":
