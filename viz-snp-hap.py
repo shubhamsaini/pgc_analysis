@@ -5,7 +5,7 @@ Author: Shubham Saini
 shubhamsaini@eng.ucsd.edu
 
 Example:
-./viz-snp-hap.py --vcf /project/gymrek/chr10/scz_munc_eur-qc.bgs.chr10.imputed.vcf.gz --str-id STR_187806 --pos 10:104639652-104639652 --samples-cases cases.txt --samples-controls controls.txt --out-dir hap_figs/
+./viz-snp-hap.py --vcf /project/gymrek/chr10/scz_munc_eur-qc.bgs.chr10.imputed.vcf.gz --str-id STR_187806 --pos 104639652 --chrom 10 --samples-cases cases.txt --samples-controls controls.txt --out-dir test_viz_out/
 
 """
 
@@ -64,116 +64,123 @@ def main():
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("--vcf", help="VCF Input", required=True, type=str)
     parser.add_argument("--str-id", help="STR ID", required=True, type=str)
-    parser.add_argument("--pos", help="STR POSITION (chr:start-end)", required=True, type=str)
-    parser.add_argument("--out-dir", help="Figure output directory", required=True, type=str)
-    parser.add_argument("--samples-cases", help="Cases file", required=False, type=str)
-    parser.add_argument("--samples-controls", help="Controls file", required=False, type=str)
+    parser.add_argument("--pos", help="STR Genomic Coordinate", required=True, type=int)
+    parser.add_argument("--chrom", help="STR Chromosome", required=True, type=int)
+    parser.add_argument("--window", help="Haplotype window size", required=False, type=int, default=5000)
+    parser.add_argument("--out-dir", help="Figure output directory", required=False, type=str, default = ".")
+    parser.add_argument("--samples-cases", help="Cases file", required=True, type=str)
+    parser.add_argument("--samples-controls", help="Controls file", required=True, type=str)
     args = parser.parse_args()
 
-    hap_file = args.vcf #"/storage/s1saini/hipstr_allfilters/str_snp/chr10.str.snp.feb18.vcf.gz"
     str_id = args.str_id #"STR_187806"
-    POS = args.pos #"10:104639652-104639652"
+    START = args.pos #104639652
+    CHROM= args.chrom #10
+    WINDOW = args.window
 
-    haplotype_df = []
+    vcf_files = []
+    with open(args.vcf) as f:
+        for line in f:
+            vcf_files.append(line.strip())
 
-    if args.samples_cases:
-        with open(args.samples_cases,"r") as samples_file:
-            samples_cases = [line.rstrip('\n') for line in samples_file]
-        with open(args.samples_controls,"r") as samples_file:
-            samples_controls = [line.rstrip('\n') for line in samples_file]
-        samples = samples_cases + samples_controls
-        vcf = VCF(hap_file, samples=samples)
-    else:
-        vcf = VCF(hap_file)
-    gt_bases_len = []
-    for v in vcf(POS):
-        if v.ID != str_id:
-            continue
-        refLen = len(v.REF)
-        if refLen == 1:
-            break
+    snp_info = {}
+    str_info = {}
+    str_gt = {}
+    snp_gt = {}
+    all_samples = []
 
-        curr_hap = [v.ID, v.POS, v.REF, ",".join(v.ALT)]
-        CHROM = int(v.CHROM)
-        START = int(v.POS)
-        gt_bases = v.gt_bases
-        for gt in gt_bases:
-            if ('.' in gt):
-                gt_bases_len = gt_bases_len + [np.nan, np.nan]
-                curr_hap = curr_hap + [np.nan, np.nan]
+    for vcf_file_loc in vcf_files:
+        if args.samples_cases:
+            with open(args.samples_cases,"r") as samples_file:
+                samples_cases = [line.rstrip('\n') for line in samples_file]
+            with open(args.samples_controls,"r") as samples_file:
+                samples_controls = [line.rstrip('\n') for line in samples_file]
+            samples = samples_cases + samples_controls
+            vcf = VCF(vcf_file_loc, samples=samples)
+        else:
+            vcf = VCF(vcf_file_loc)
+
+        all_samples = all_samples + vcf.samples
+        for v in vcf("%s:%s-%s"%(CHROM, START-WINDOW, START+WINDOW)):
+            if v.ID == str_id:
+                if v.ID not in str_info.keys():
+                    str_info[v.ID] = [v.POS, v.REF, ",".join(v.ALT)]
+                refLen = len(v.REF)
+                gt_bases = v.gt_bases
+                str_dosages = []
+                for gt in gt_bases:
+                    if ('.' in gt):
+                        str_dosages = str_dosages + [np.nan, np.nan]
+                    else:
+                        gt_bases_split = re.split('/|\|',gt)
+                        str_dosages = str_dosages + [(len(i) - refLen) for i in gt_bases_split]
+                if v.ID not in str_gt.keys():
+                    str_gt[v.ID] = str_dosages
+                else:
+                    str_gt[v.ID] = str_gt[v.ID] + str_dosages
             else:
-                gt_bases_split = re.split('/|\|',gt)
-                gt_bases_len = gt_bases_len + [(len(i) - refLen) for i in gt_bases_split]
-                curr_hap = curr_hap + [(len(i) - refLen) for i in gt_bases_split]
+                refLen = len(v.REF)
+                if refLen > 1:
+                    continue
+                if len(v.ALT) > 1:
+                    continue
+
+                if v.ID not in snp_info.keys():
+                    snp_info[v.ID] = [v.POS, v.REF, ",".join(v.ALT)]
+                snp_dosages = []
+                for x in v.genotypes:
+                    if ('.' in x):
+                        snp_dosages = snp_dosages + [np.nan, np.nan]
+                    else:
+                        snp_dosages = snp_dosages + [x[0], x[1]]
+                if v.ID not in snp_gt.keys():
+                    snp_gt[v.ID] = snp_dosages
+                else:
+                    snp_gt[v.ID] = snp_gt[v.ID] + snp_dosages
 
 
-    str_dosages = gt_bases_len
+    str_info = pd.DataFrame.from_dict(str_info, orient="index", columns=['pos','ref','alt'])
+    snp_info = pd.DataFrame.from_dict(snp_info, orient="index", columns=['pos','ref','alt'])
+    colnames = []
+    for i in all_samples:
+        colnames.extend([i+"_0", i+"_1"])
+    snp_gt = pd.DataFrame.from_dict(snp_gt, orient="index", columns=colnames)
+    str_gt = pd.DataFrame.from_dict(str_gt, orient="index", columns=colnames)
+    snp_gt.dropna(inplace=True)
+    str_gt.dropna(inplace=True)
+    str_info = str_info.merge(str_gt, left_index=True, right_index=True)
+    snp_info = snp_info.merge(snp_gt, left_index=True, right_index=True)
+    haplotypes_full = snp_info.append(str_info).reset_index()
+    haplotypes_full.rename(columns={"index": "id"}, inplace=True)
+    print(str_info.shape)
+    print(snp_info.shape)
 
-    numhaps = len(vcf.samples)*2
-    colnames = ["id","pos","ref","alt"] + ["hap_%s"%i for i in range(numhaps)]
-    haplotype_df.append(curr_hap)
-    print(len(haplotype_df))
-
-    WINDOW = 100000
-
-    if args.samples_cases:
-        with open(args.samples_cases,"r") as samples_file:
-            samples_cases = [line.rstrip('\n') for line in samples_file]
-        with open(args.samples_controls,"r") as samples_file:
-            samples_controls = [line.rstrip('\n') for line in samples_file]
-        samples = samples_cases + samples_controls
-        vcf = VCF(hap_file, samples=samples)
-    else:
-        vcf = VCF(hap_file)
-    snp_gt = []
-    snp_id = []
-    for v in vcf("%s:%s-%s"%(CHROM, START-WINDOW, START+WINDOW)):
-        refLen = len(v.REF)
-        if refLen > 1:
-            continue
-        if len(v.ALT) > 1:
-            continue
-
-        curr_hap = [v.ID, v.POS, v.REF, ",".join(v.ALT)]
-        snp_id.append(str(v.ID))
-        gt_bases_len = []
-        for x in v.genotypes:
-            if ('.' in x):
-                gt_bases_len = gt_bases_len + [np.nan, np.nan]
-                curr_hap = curr_hap + [np.nan, np.nan]
-            else:
-                gt_bases_len = gt_bases_len + [x[0], x[1]]
-                curr_hap = curr_hap + [x[0], x[1]]
-
-        haplotype_df.append(curr_hap)
-        snp_gt.append(gt_bases_len)
-
-    snp = np.array(snp_gt).T
-    haplotypes_full = pd.DataFrame(haplotype_df, columns=colnames)
-
-    print(snp.shape)
-    print(len(str_dosages))
-
-    print(haplotypes_full.shape)
+    snp = snp_gt.values.T
+    str_dosages = str_gt.values.tolist()[0]
 
     elastic_net= ElasticNet(alpha= 0.1, l1_ratio= 0.5) # l1_ratio is the mix r
-
     elastic_net.fit(snp,str_dosages)
-    print(elastic_net.score(snp,str_dosages))
+    print("Model accuracy: ", elastic_net.score(snp,str_dosages))
 
     HAP_LENGTH = 20
     locus = str_id.replace("/","_")
-    RSIDS=[snp_id[i] for i in np.argsort(np.absolute(elastic_net.coef_))[-HAP_LENGTH:]] + [locus]
+    RSIDS=[snp_gt.index.tolist()[i] for i in np.argsort(np.absolute(elastic_net.coef_))[-HAP_LENGTH:]] + [locus]
     print("Top SNPS:")
-    print(RSIDS)
+    print(RSIDS[:-1])
 
-    samples_cases = list(set(samples_cases).intersection(vcf.samples))
-    samples_controls = list(set(samples_controls).intersection(vcf.samples))
-    num_cases = len(samples_cases)
-    num_controls = len(samples_controls)
+    samples_cases = list(set(samples_cases).intersection(all_samples))
+    samples_controls = list(set(samples_controls).intersection(all_samples))
 
-    cases_colnames = ["id","pos","ref","alt"] + ["hap_%s"%i for i in range(num_cases*2)]
-    controls_colnames = ["id","pos","ref","alt"] + ["hap_%s"%i for i in range(num_cases*2+1, numhaps)]
+
+    cases_colnames = []
+    for i in samples_cases:
+        cases_colnames.extend([i+"_0", i+"_1"])
+    cases_colnames = ["id","pos","ref","alt"] + cases_colnames
+
+
+    controls_colnames = []
+    for i in samples_controls:
+        controls_colnames.extend([i+"_0", i+"_1"])
+    controls_colnames = ["id","pos","ref","alt"] + controls_colnames
 
     ####
     ### Do for cases first
