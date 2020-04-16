@@ -31,15 +31,16 @@ def str2bool(v):
 
 def main():
     parser = argparse.ArgumentParser(__doc__)
-    parser.add_argument("--assoc", help="Argument 1 description", required=True, type=str)
-    parser.add_argument("--out-dir", help="Argument 1 description", required=False, type=str, default=".")
+    parser.add_argument("--assoc", help="PlinkSTR ouput", required=True, type=str)
+    parser.add_argument("--min-maf", help="Minimum allele frequency. Default: 0.0", required=False, type=float, default=0.0)
+    parser.add_argument("--out-dir", help="Output Directory", required=False, type=str, default=".")
     args = parser.parse_args()
 
     data = pd.read_csv(args.assoc, delim_whitespace=True)
 
     data = data.dropna()
     data = data[data['OR'] > 0]
-    data = data[data['MAF'] > 0]
+    data = data[data['MAF'] > args.min_maf]
 
     data = data[data['SNP'].str.contains('length')]
     lengths = [int(x.split("-")[-1]) for x in data['SNP'].tolist()]
@@ -55,7 +56,7 @@ def main():
     fig = plt.figure()
     plt.errorbar(plot_data.len, plot_data.odds, yerr=(plot_data.odds-plot_data.ci_low), marker="o", linewidth=1, color="black")
     for line in range(0,plot_data.shape[0]):
-        plt.text(plot_data.len[line]+0.2, plot_data.odds[line], plot_data.af[line], horizontalalignment='left', color='black', weight='semibold')
+        plt.text(plot_data.len[line], plot_data.odds[line]+((plot_data.odds[line]-plot_data.ci_low[line])/10), plot_data.af[line], horizontalalignment='left', color='black', weight='semibold')
     plt.title('chr%d:%d %s'%(data['CHROM'].values[0], data['BP'].values[0], data['SNP'].values[0].split("-")[0]))
     fig.savefig(args.out_dir+"/"+args.assoc+'.png')
 

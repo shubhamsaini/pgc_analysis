@@ -31,7 +31,6 @@ from scipy.stats import norm
 from collections import defaultdict
 import seaborn as sns
 import matplotlib.pyplot as plt
-import re
 
 from subprocess import Popen, PIPE, STDOUT
 
@@ -65,6 +64,9 @@ def main():
     parser.add_argument("--pos", help="POSITION", required=True, type=str)
     parser.add_argument("--window-kb", help="Window in KB", required=True, type=str)
     parser.add_argument("--maxp", help="Maximum p-value", required=False, type=str)
+    parser.add_argument("--min-snps", help="Minimum number of SNPs to include", required=False, type=int)
+    parser.add_argument("--out-dir", help="Output directory name", required=False, type=str, default=".")
+    parser.add_argument("--plot", help="Output top variants and plots", action="store_true")
 
     parser.add_argument("--out", help="Output file name. Default: stdout", required=False, type=str)
     args = parser.parse_args()
@@ -88,13 +90,13 @@ def main():
 
     ### CAVIAR parameters
     seed = np.random.randint(100000)
-    ldfile = 'caviar_files/corr_mat_%d.txt'%(seed)
-    zfile = 'caviar_files/zscore_%d.csv'%(seed)
+    ldfile = '%s/corr_mat_%d_%d.txt'%(args.out_dir,CHROM, POS)
+    zfile = '%s/zscore_%d_%d.csv'%(args.out_dir,CHROM, POS)
     numcausal = "2"
-    outfile = "caviar_files/caviar.output_%d_%d_%d"%(CHROM, POS, seed)
+    outfile = "%s/caviar.output_%d_%d"%(args.out_dir,CHROM, POS)
 
 
-    PrintLine('Seed %d %d %d %d'%(seed, CHROM, START, END), outf)
+    PrintLine('%d %d %d'%(CHROM, START, END), outf)
     PrintLine("Loading STR GWAS results", outf)
 
     str_assoc_result = pd.read_csv(args.str_assoc, delim_whitespace=True)
@@ -122,7 +124,11 @@ def main():
     snp_assoc_result['CHR'] = CHROM
     snp_assoc_result['P'] = snp_assoc_result.P.astype('float')
     if args.maxp:
-        snp_assoc_result = snp_assoc_result[snp_assoc_result['P']<=float(args.maxp)]
+        if args.min_snps and snp_assoc_result[snp_assoc_result['P']<=float(args.maxp)].shape[0] < args.min_snps:
+            snp_assoc_result = snp_assoc_result.sort_values(by=['P'])
+            snp_assoc_result = snp_assoc_result.head(args.min_snps)
+        else:
+            snp_assoc_result = snp_assoc_result[snp_assoc_result['P']<=float(args.maxp)]
     snp_assoc_result = snp_assoc_result.sort_values(by=['BP'])
     print(snp_assoc_result.shape)
 
@@ -137,14 +143,14 @@ def main():
     region = '%d:%d-%d'%(CHROM,START,END)
 
     for vcf_file_loc in snp_vcf_files:
-        cmd = "bcftools query -r "+region+" -f '%ID\n' "+vcf_file_loc+" >> caviar_files/snp_files_rsid_" + str(seed) + ".txt"
+        cmd = f"bcftools query -r {region} -f '%ID\n' {vcf_file_loc} >> {args.out_dir}/snp_files_rsid_{CHROM}_{POS}.txt"
         p = Popen(cmd, shell=True, stdout=DEVNULL, stderr=DEVNULL)
         output = p.communicate()[0]
         if p.returncode != 0:
             print("Failed")
 
     snp_all_rsid = set()
-    with open("caviar_files/snp_files_rsid_%d.txt"%(seed)) as f:
+    with open("%s/snp_files_rsid_%d_%d.txt"%(args.out_dir,CHROM, POS)) as f:
         for line in f:
             if line.strip() in gwas_rsid:
                 snp_all_rsid.add(line.strip())
@@ -189,11 +195,10 @@ def main():
 
     vcf = VCF(str_vcf_file, gts012=True, samples=samples)
     for v in vcf('%d:%d-%d'%(CHROM,START,END)):
-        str_gt = []
         if str(v.ID) in gwas_rsid:
-            for gt in v.gt_bases:
-                str_gt.append(np.sum([len(i)-len(v.REF) for i in re.split('/|\|',gt)]))
-            gt_array2[str(v.ID)] = str_gt
+            gt = np.array(v.gt_types, dtype="float")
+            gt[gt==3] = np.nan
+            gt_array2[str(v.ID)] = gt_array2[str(v.ID)] + list(gt)
             str_rsid.add(str(v.ID))
 
     gt_array2 = pd.DataFrame(gt_array2, dtype="float")
@@ -239,40 +244,42 @@ def main():
         PrintLine("CAVIAR failed", outf)
         return False
 
-    caviar_output = pd.read_csv(outfile+"_post", delim_whitespace=True)
-    caviar_output = caviar_output.merge(str_snp, left_on="SNP_ID", right_on="ID", how="left")
-    caviar_output = caviar_output.sort_values(by=['Causal_Post._Prob.'], ascending=False)
-    caviar_output = caviar_output.reset_index()
-    caviar_output['index'] = caviar_output.index
 
-    print("============ Top Causal Variants ============")
-    print(caviar_output.head())
+    if args.plot:
+        caviar_output = pd.read_csv(outfile+"_post", delim_whitespace=True)
+        caviar_output = caviar_output.merge(str_snp, left_on="SNP_ID", right_on="ID", how="left")
+        caviar_output = caviar_output.sort_values(by=['Causal_Post._Prob.'], ascending=False)
+        caviar_output = caviar_output.reset_index()
+        caviar_output['index'] = caviar_output.index
 
-    print("============ Top STR Variants ============")
-    print(caviar_output[caviar_output['vtype']=="STR"].head())
+        print("============ Top Causal Variants ============")
+        print(caviar_output.head())
 
-    fig_df = caviar_output.copy()
-    fig_df = fig_df[['index','BP','P','vtype']]
-    fig_df.loc[:,'logP'] = -np.log10(fig_df.P.values)
+        print("============ Top STR Variants ============")
+        print(caviar_output[caviar_output['vtype']=="STR"].head())
 
-    sns.set(style="darkgrid")
-    fig, ax = plt.subplots(figsize=(10,5))
-    ax = sns.scatterplot(x="BP", y="logP", hue="vtype", data=fig_df, ax=ax, palette=dict(SNP="blue", STR="red"))
-    ax.legend(bbox_to_anchor=(1, 1), ncol=1)
-    xlabels = ['{:,.2f}'.format(x) + 'M' for x in ax.get_xticks()/1000000]
-    ax.set_xticklabels(xlabels)
-    ax.set_xlabel("BP")
-    ax.set_ylabel("-log10 P")
-    ax.set_title("Manhattan Plot %d:%d-%d"%(CHROM,START,END))
-    fig.savefig("output_figs/fig1_chr%d-%d-%d.png"%(CHROM,START,END))
+        fig_df = caviar_output.copy()
+        fig_df = fig_df[['index','BP','P','vtype']]
+        fig_df.loc[:,'logP'] = -np.log10(fig_df.P.values)
 
-    fig, ax = plt.subplots(figsize=(10,5))
-    ax = sns.scatterplot(x="index", y="logP", hue="vtype", data=fig_df, ax=ax, palette=dict(SNP="blue", STR="red"))
-    ax.legend(bbox_to_anchor=(1, 1), ncol=1)
-    ax.set_xlabel("CAVIAR Rank")
-    ax.set_ylabel("-log10 P")
-    ax.set_title("CAVIAR Rank vs. GWAS P-value %d:%d-%d"%(CHROM,START,END))
-    fig.savefig("output_figs/fig2_chr%d-%d-%d.png"%(CHROM,START,END))
+        sns.set(style="darkgrid")
+        fig, ax = plt.subplots(figsize=(10,5))
+        ax = sns.scatterplot(x="BP", y="logP", hue="vtype", data=fig_df, ax=ax, palette=dict(SNP="blue", STR="red"))
+        ax.legend(bbox_to_anchor=(1, 1), ncol=1)
+        xlabels = ['{:,.2f}'.format(x) + 'M' for x in ax.get_xticks()/1000000]
+        ax.set_xticklabels(xlabels)
+        ax.set_xlabel("BP")
+        ax.set_ylabel("-log10 P")
+        ax.set_title("Manhattan Plot %d:%d-%d"%(CHROM,START,END))
+        fig.savefig("%s/fig1_chr%d-%d-%d.png"%(args.out_dir,CHROM,START,END))
+
+        fig, ax = plt.subplots(figsize=(10,5))
+        ax = sns.scatterplot(x="index", y="logP", hue="vtype", data=fig_df, ax=ax, palette=dict(SNP="blue", STR="red"))
+        ax.legend(bbox_to_anchor=(1, 1), ncol=1)
+        ax.set_xlabel("CAVIAR Rank")
+        ax.set_ylabel("-log10 P")
+        ax.set_title("CAVIAR Rank vs. GWAS P-value %d:%d-%d"%(CHROM,START,END))
+        fig.savefig("%s/fig2_chr%d-%d-%d.png"%(args.out_dir,CHROM,START,END))
 
 if __name__ == "__main__":
     main()
