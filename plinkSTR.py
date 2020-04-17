@@ -64,6 +64,17 @@ def LoadCondition(vcffile, condition, sample_order):
     common.ERROR("Could not find SNP to condition on")
 
 
+def LoadConditionFromFile(file, condition, sample_order, sample_column=None):
+    if sample_column is None:
+        sample_column = "sample"
+    condition_data = pd.read_csv(file, delim_whitespace=True, usecols = [sample_column, condition])
+    #condition_data = condition_data[[sample_column, condition]]
+    d = [condition_data[condition_data[sample_column]==s][condition].values[0] for s in sample_order]
+    if len(d) == 0:
+        common.ERROR("Could not find data to condition on")
+    return d, None
+
+
 def GetAssocType(is_str, alt=-1, alt_len=-1, name=None):
     """
     Return string describing association type
@@ -193,16 +204,14 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
     for sample in record:
         if not is_str:  # Note, code opposite to match plink results
             try:
-                gtdata[sample.sample] = sum(
-                    [1-int(item) for item in sample.gt_alleles])
+                gtdata[sample.sample] = sum([1-int(item) for item in sample.gt_alleles])
             except:
                 gtdata[sample.sample] = 0
                 exclude_samples.append(sample.sample)
         else:
             if use_alt_num > -1:
                 try:
-                    sumAlleles = sum([int(int(item) == use_alt_num)
-                                      for item in sample.gt_alleles])
+                    sumAlleles = sum([int(int(item) == use_alt_num) for item in sample.gt_alleles])
                 except:
                     sumAlleles = 0
                     exclude_samples.append(sample.sample)
@@ -220,15 +229,12 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
                     f1, f2 = [afreqs[int(item)] for item in sample.gt_alleles]
                     if f1 < rmrare or f2 < rmrare:
                         exclude_samples.append(sample.sample)
-                        gtdata[sample.sample] = sum(
-                            [len(record.REF) for item in sample.gt_alleles])
+                        gtdata[sample.sample] = sum([len(record.REF) for item in sample.gt_alleles])
                     else:
                         if use_gp is True:
-                            gtdata[sample.sample] = sum([(alleles_lengths[genotype[0]] + alleles_lengths[genotype[1]])
-                                                         * sample['GP'][gp_position(genotype[0], genotype[1])] for genotype in comb])
+                            gtdata[sample.sample] = sum([(alleles_lengths[genotype[0]] + alleles_lengths[genotype[1]]) * sample['GP'][gp_position(genotype[0], genotype[1])] for genotype in comb])
                         else:
-                            gtdata[sample.sample] = sum(
-                                [len(alleles[int(item)]) for item in sample.gt_alleles])
+                            gtdata[sample.sample] = sum([len(alleles[int(item)]) for item in sample.gt_alleles])
                 except:
                     f1, f2 = [0, 0]
                     exclude_samples.append(sample.sample)
@@ -269,13 +275,10 @@ def AddCovars(data, fname, covar_name, covar_number):
     other_defaults = ["Father_ID", "Mother_ID", "sex", "phenotype"]
     if covar_name:
         colnames = default_cols+covar_name.split(",")
-        cov = pd.read_csv(fname, delim_whitespace=True,
-                          usecols=colnames)
+        cov = pd.read_csv(fname, delim_whitespace=True, usecols=colnames)
     elif covar_number:
         colnames = default_cols+["C"+item for item in covar_number.split(",")]
-        cov = pd.read_csv(fname, delim_whitespace=True,
-                          names=colnames,
-                          usecols=list(range(2))+[1+int(item) for item in covar_number.split(",")])
+        cov = pd.read_csv(fname, delim_whitespace=True, names=colnames, usecols=list(range(2))+[1+int(item) for item in covar_number.split(",")])
     else:
         cov = pd.read_csv(fname, delim_whitespace=True)
         if "FID" not in cov.columns:
@@ -316,57 +319,36 @@ def main():
     inout_group = parser.add_argument_group("Input/output")
     inout_group.add_argument("--vcf", help="Input VCF file", type=str)
     inout_group.add_argument("--out", help="Output prefix", type=str)
-    inout_group.add_argument(
-        "--fam", help="FAM file with phenotype info", type=str)
-    inout_group.add_argument(
-        "--samples", help="File with list of samples to include", type=str)
-    inout_group.add_argument(
-        "--exclude-samples", help="File with list of samples to exclude", type=str)
-    inout_group.add_argument("--vcf-samples-delim",
-                             help="FID and IID delimiter in VCF", type=str)
+    inout_group.add_argument("--fam", help="FAM file with phenotype info", type=str)
+    inout_group.add_argument("--samples", help="File with list of samples to include", type=str)
+    inout_group.add_argument("--exclude-samples", help="File with list of samples to exclude", type=str)
+    inout_group.add_argument("--vcf-samples-delim", help="FID and IID delimiter in VCF", type=str)
     pheno_group = parser.add_argument_group("Phenotypes")
-    pheno_group.add_argument(
-        "--pheno", help="Phenotypes file (to use instead of --fam)", type=str)
-    pheno_group.add_argument(
-        "--mpheno", help="Use (n+2)th column from --pheno", type=int, default=1)
-    pheno_group.add_argument(
-        "--missing-phenotype", help="Missing phenotype code", type=str, default="-9")
+    pheno_group.add_argument("--pheno", help="Phenotypes file (to use instead of --fam)", type=str)
+    pheno_group.add_argument("--mpheno", help="Use (n+2)th column from --pheno", type=int, default=1)
+    pheno_group.add_argument("--missing-phenotype", help="Missing phenotype code", type=str, default="-9")
     covar_group = parser.add_argument_group("Covariates")
     covar_group.add_argument("--covar", help="Covariates file", type=str)
-    covar_group.add_argument(
-        "--covar-name", help="Names of covariates to load. Comma-separated", type=str)
-    covar_group.add_argument(
-        "--covar-number", help="Column number of covariates to load. Comma-separated", type=str)
-    covar_group.add_argument(
-        "--sex", help="Include sex from fam file as covariate", action="store_true")
-    covar_group.add_argument(
-        "--cohort-pgc", help="Use cohort from PGC FIDs as a covariate", action="store_true")
+    covar_group.add_argument("--covar-name", help="Names of covariates to load. Comma-separated", type=str)
+    covar_group.add_argument("--covar-number", help="Column number of covariates to load. Comma-separated", type=str)
+    covar_group.add_argument("--sex", help="Include sex from fam file as covariate", action="store_true")
+    covar_group.add_argument("--cohort-pgc", help="Use cohort from PGC FIDs as a covariate", action="store_true")
     assoc_group = parser.add_argument_group("Association testing")
-    assoc_group.add_argument(
-        "--linear", help="Perform linear regression", action="store_true")
-    assoc_group.add_argument(
-        "--logistic", help="Perform logistic regression", action="store_true")
-    assoc_group.add_argument(
-        "--region", help="Only process this region (chrom:start-end)", type=str)
-    assoc_group.add_argument(
-        "--infer-snpstr", help="Infer which positions are SNPs vs. STRs", action="store_true")
-    assoc_group.add_argument(
-        "--allele-tests", help="Also perform allele-based tests using each separate allele", action="store_true")
-    assoc_group.add_argument(
-        "--allele-tests-length", help="Also perform allele-based tests using allele length", action="store_true")
-    assoc_group.add_argument(
-        "--minmaf", help="Ignore bi-allelic sites with low MAF.", type=float, default=0.01)
-    assoc_group.add_argument(
-        "--str-only", help="Used with --infer-snptr, only analyze STRs", action="store_true")
-    assoc_group.add_argument("--remove-rare-str-alleles",
-                             help="Remove genotypes with alleles less than this freq", default=0.0, type=float)
-    assoc_group.add_argument(
-        "--max-iter", help="Maximum number of iterations for logistic regression", default=100, type=int)
-    assoc_group.add_argument(
-        "--use-gp", help="Use GP field from Beagle output", action="store_true")
+    assoc_group.add_argument("--linear", help="Perform linear regression", action="store_true")
+    assoc_group.add_argument("--logistic", help="Perform logistic regression", action="store_true")
+    assoc_group.add_argument("--region", help="Only process this region (chrom:start-end)", type=str)
+    assoc_group.add_argument("--infer-snpstr", help="Infer which positions are SNPs vs. STRs", action="store_true")
+    assoc_group.add_argument("--allele-tests", help="Also perform allele-based tests using each separate allele", action="store_true")
+    assoc_group.add_argument("--allele-tests-length", help="Also perform allele-based tests using allele length", action="store_true")
+    assoc_group.add_argument("--minmaf", help="Ignore bi-allelic sites with low MAF.", type=float, default=0.01)
+    assoc_group.add_argument("--str-only", help="Used with --infer-snptr, only analyze STRs", action="store_true")
+    assoc_group.add_argument("--remove-rare-str-alleles", help="Remove genotypes with alleles less than this freq", default=0.0, type=float)
+    assoc_group.add_argument("--max-iter", help="Maximum number of iterations for logistic regression", default=100, type=int)
+    assoc_group.add_argument("--use-gp", help="Use GP field from Beagle output", action="store_true")
     fm_group = parser.add_argument_group("Fine mapping")
-    fm_group.add_argument(
-        "--condition", help="Condition on this position chrom:start", type=str)
+    fm_group.add_argument("--condition", help="Condition on this position chrom:start", type=str)
+    fm_group.add_argument("--condition-file", help="Load Condition from this file", type=str)
+    fm_group.add_argument("--condition-sample-column", help="Column name for samples in the condition file", type=str)
     args = parser.parse_args()
     # Some initial checks
     if int(args.linear) + int(args.logistic) != 1:
@@ -414,8 +396,7 @@ def main():
     # Set sample ID to FID_IID to match vcf
     common.MSG("Set up sample info")
     if args.vcf_samples_delim is not None:
-        pdata["sample"] = pdata.apply(
-            lambda x: x["FID"]+args.vcf_samples_delim+x["IID"], 1)
+        pdata["sample"] = pdata.apply(lambda x: x["FID"]+args.vcf_samples_delim+x["IID"], 1)
     else:
         pdata["sample"] = pdata.apply(lambda x: x["IID"], 1)
     reader_samples = set(reader.samples)
@@ -426,7 +407,10 @@ def main():
 
     # Get data to condition on
     if args.condition is not None:
-        cond_gt = LoadCondition(args.vcf, args.condition, sample_order)
+        if args.condition_file is not None:
+            cond_gt = LoadConditionFromFile(args.condition_file, args.condition, sample_order, args.condition_sample_column)
+        else:
+            cond_gt = LoadCondition(args.vcf, args.condition, sample_order)
         pdata["condition"] = cond_gt[0]
         covarcols.append("condition")
 
@@ -435,8 +419,7 @@ def main():
         outf = sys.stdout
     else:
         outf = open(args.out, "w")
-    PrintHeader(outf, case_control=args.logistic,
-                quant=args.linear, comment_lines=[" ".join(sys.argv)])
+    PrintHeader(outf, case_control=args.logistic, quant=args.linear, comment_lines=[" ".join(sys.argv)])
 
     # Perform association test for each record
     common.MSG("Perform associations... with covars %s" % str(covarcols))
@@ -461,41 +444,35 @@ def main():
                 continue
         # Extract genotypes in sample order, perform regression, and output
         common.MSG("   Load genotypes...")
-        gts, exclude_samples = LoadGT(
-            record, sample_order, is_str=is_str, rmrare=args.remove_rare_str_alleles, use_gp=args.use_gp)
+        gts, exclude_samples = LoadGT(record, sample_order, is_str=is_str, rmrare=args.remove_rare_str_alleles, use_gp=args.use_gp)
         pdata["GT"] = gts
         pdata["intercept"] = 1
         minmaf = args.minmaf
         common.MSG("   Perform association...")
-        assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear,
-                                   maf=aaf, exclude_samples=exclude_samples, maxiter=args.max_iter)
+        assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=aaf, exclude_samples=exclude_samples, maxiter=args.max_iter)
         assoc["REF"] = str(record.REF)
         if not is_str:
             assoc["ALT"] = str(record.ALT[0])
         else:
             assoc["ALT"] = ",".join([str(i) for i in record.ALT])
         common.MSG("   Output association...")
-        OutputAssoc(record.CHROM, record.POS, assoc, outf,
-                    assoc_type=GetAssocType(is_str, name=record.ID))
+        OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, name=record.ID))
         # Allele based tests
         common.MSG("   Allele based tests...")
         if is_str and args.allele_tests:
             alleles = [record.REF]+record.ALT
             for i in range(len(record.ALT)+1):
-                gts, exclude_samples = LoadGT(
-                    record, sample_order, is_str=True, use_alt_num=i)
+                gts, exclude_samples = LoadGT(record, sample_order, is_str=True, use_alt_num=i)
                 pdata["GT"] = gts
                 if pdata.shape[0] == 0:
                     continue
                 allele_maf = sum(pdata["GT"])*1.0/(2*pdata.shape[0])
                 if allele_maf == 0:
                     continue
-                assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear,
-                                           maf=allele_maf, exclude_samples=exclude_samples, maxiter=args.max_iter)
+                assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=allele_maf, exclude_samples=exclude_samples, maxiter=args.max_iter)
                 assoc["REF"] = str(record.REF)
                 assoc["ALT"] = alleles[i]
-                OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(
-                    is_str, alt=alleles[i], name=record.ID))
+                OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, alt=alleles[i], name=record.ID))
         if is_str and args.allele_tests_length:
             for length in set([len(record.REF)] + [len(alt) for alt in record.ALT]):
                 gts, exclude_samples = LoadGT(
@@ -506,12 +483,10 @@ def main():
                 allele_maf = sum(pdata["GT"])*1.0/(2*pdata.shape[0])
                 if allele_maf == 0:
                     continue
-                assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear,
-                                           maf=allele_maf, exclude_samples=exclude_samples, maxiter=args.max_iter)
+                assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=allele_maf, exclude_samples=exclude_samples, maxiter=args.max_iter)
                 assoc["REF"] = "Length-%d" % (len(str(record.REF)))
                 assoc["ALT"] = "Length-%d" % (length)
-                OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(
-                    is_str, alt_len=length, name=record.ID))
+                OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, alt_len=length, name=record.ID))
 
 
 if __name__ == "__main__":
