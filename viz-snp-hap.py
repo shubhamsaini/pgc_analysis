@@ -5,7 +5,7 @@ Author: Shubham Saini
 shubhamsaini@eng.ucsd.edu
 
 Example:
-./viz-snp-hap.py --vcf /project/gymrek/chr10/scz_munc_eur-qc.bgs.chr10.imputed.vcf.gz --str-id STR_187806 --pos 104639652 --chrom 10 --samples-cases cases.txt --samples-controls controls.txt --out-dir test_viz_out/
+./viz-snp-hap.py --vcf vcf_files_1.txt --str-id STR_187806 --pos 104639652 --chrom 10 --samples-cases cases.txt --samples-controls controls.txt --out-dir test_viz_out/
 
 """
 

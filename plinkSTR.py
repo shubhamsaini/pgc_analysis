@@ -22,7 +22,8 @@ Example - PGC:
 # - check for VIF
 
 # Constants
-import vcf
+from collections import Counter
+from cyvcf2 import VCF
 import statsmodels.api as sm
 from statsmodels.formula.api import logit
 import pandas as pd
@@ -50,17 +51,19 @@ def gp_position(j, k):
 
 
 def LoadCondition(vcffile, condition, sample_order):
-    reader2 = vcf.Reader(open(vcffile, "rb"))
+    reader2 = VCF(vcffile)
+    #reader2 = vcf.Reader(open(vcffile, "rb"))
     chrom, start = condition.split(":")
     region = "%s:%s-%s" % (chrom, start, int(start)+1)
     reader2.fetch(region)
+    reader2 = reader2(region)
     for record in reader2:
         print(record.start, int(start), record.ID)
         if record.POS == int(start):
             is_str = True
             if len(record.REF) == 1 and len(record.ALT) == 1 and len(record.ALT[0]) == 1:
                 is_str = False
-            return LoadGT(record, sample_order, is_str=is_str)
+            return LoadGT(record, sample_order, is_str=is_str, vcf_samples = reader2.samples)
     common.ERROR("Could not find SNP to condition on")
 
 
@@ -73,7 +76,6 @@ def LoadConditionFromFile(file, condition, sample_order, sample_column=None):
     if len(d) == 0:
         common.ERROR("Could not find data to condition on")
     return d, None
-
 
 def GetAssocType(is_str, alt=-1, alt_len=-1, name=None):
     """
@@ -152,9 +154,7 @@ def PerformAssociation(data, covarcols, case_control=False, quant=True, maf=1.0,
     if case_control:
         try:
             pgclogit = sm.Logit(data["phenotype"], data[["intercept", "GT"]+covarcols]).fit(
-                disp=0, maxiter=maxiter)  # not using formula api anymore, much faster!
-            #pgclogit = logit(formula=formula, data=data[data["sample"].apply(lambda x: x not in exclude_samples)][["phenotype", "GT"]+covarcols]).fit(disp=0, maxiter=maxiter)
-            # print pgclogit.summary() # TODO remove after debug
+                disp=0, maxiter=maxiter)
         except:
             assoc["coef"] = "NA"
             assoc["pval"] = "NA"
@@ -177,7 +177,7 @@ def PerformAssociation(data, covarcols, case_control=False, quant=True, maf=1.0,
     return assoc
 
 
-def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1, rmrare=0, use_gp=False):
+def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1, rmrare=0, use_gp=False, vcf_samples = None):
     """
     Load genotypes from a record and return values in the sample order
     Input:
@@ -194,54 +194,60 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
     gtdata = {}
     exclude_samples = []
     alleles = [record.REF]+record.ALT
-    afreqs = [(1-sum(record.aaf))]+record.aaf
+    #afreqs = [(1-sum(record.aaf))]+record.aaf
+    genotypes = np.array(record.genotypes)[:,0:2]
+
+    acounts = Counter(genotypes.flatten())
+    afreqs = [acounts[i]/genotypes.flatten().shape[0] for i in range(len(alleles))]
+    aaf = sum(afreqs[1:])
+    aaf = min([aaf, 1-aaf])
 
     if use_gp is True:
         from itertools import combinations_with_replacement
         alleles_lengths = [len(record.REF)]+[len(i) for i in record.ALT]
         comb = list(combinations_with_replacement(
             range(len(alleles_lengths)), 2))
-    for sample in record:
+    for sample in range(len(vcf_samples)):
         if not is_str:  # Note, code opposite to match plink results
             try:
-                gtdata[sample.sample] = sum([1-int(item) for item in sample.gt_alleles])
+                gtdata[vcf_samples[sample]] = sum([1-int(item) for item in genotypes[sample]])
             except:
-                gtdata[sample.sample] = 0
-                exclude_samples.append(sample.sample)
+                gtdata[vcf_samples[sample]] = 0
+                exclude_samples.append(vcf_samples[sample])
         else:
             if use_alt_num > -1:
                 try:
-                    sumAlleles = sum([int(int(item) == use_alt_num) for item in sample.gt_alleles])
+                    sumAlleles = sum([int(int(item) == use_alt_num) for item in genotypes[sample]])
                 except:
                     sumAlleles = 0
-                    exclude_samples.append(sample.sample)
-                gtdata[sample.sample] = sumAlleles
+                    exclude_samples.append(vcf_samples[sample])
+                gtdata[vcf_samples[sample]] = sumAlleles
             elif use_alt_length > -1:
                 try:
                     sumAllelesLen = sum(
-                        [int(len(alleles[int(item)]) == use_alt_length) for item in sample.gt_alleles])
+                        [int(len(alleles[int(item)]) == use_alt_length) for item in genotypes[sample]])
                 except:
                     sumAllelesLen = 0
-                    exclude_samples.append(sample.sample)
-                gtdata[sample.sample] = sumAllelesLen
+                    exclude_samples.append(vcf_samples[sample])
+                gtdata[vcf_samples[sample]] = sumAllelesLen
             else:
-                try:
-                    f1, f2 = [afreqs[int(item)] for item in sample.gt_alleles]
-                    if f1 < rmrare or f2 < rmrare:
-                        exclude_samples.append(sample.sample)
-                        gtdata[sample.sample] = sum([len(record.REF) for item in sample.gt_alleles])
-                    else:
-                        if use_gp is True:
-                            gtdata[sample.sample] = sum([(alleles_lengths[genotype[0]] + alleles_lengths[genotype[1]]) * sample['GP'][gp_position(genotype[0], genotype[1])] for genotype in comb])
+                if use_gp is True:
+                    gtdata[vcf_samples[sample]] = sum([(alleles_lengths[genotype[0]] + alleles_lengths[genotype[1]]) * record.format('GP')[gp_position(genotype[0], genotype[1])] for genotype in comb])
+                else:
+                    try:
+                        f1, f2 = [afreqs[int(item)] for item in genotypes[sample]]
+                        if f1 < rmrare or f2 < rmrare:
+                            exclude_samples.append(vcf_samples[sample])
+                            gtdata[vcf_samples[sample]] = sum([len(record.REF) for item in genotypes[sample]])
                         else:
-                            gtdata[sample.sample] = sum([len(alleles[int(item)]) for item in sample.gt_alleles])
-                except:
-                    f1, f2 = [0, 0]
-                    exclude_samples.append(sample.sample)
-                    gtdata[sample.sample] = 2*len(record.REF)
+                            gtdata[vcf_samples[sample]] = sum([len(alleles[int(item)]) for item in genotypes[sample]])
+                    except:
+                        f1, f2 = [0, 0]
+                        exclude_samples.append(vcf_samples[sample])
+                        gtdata[vcf_samples[sample]] = 2*len(record.REF)
 
     d = [gtdata[s] for s in sample_order]
-    return d, exclude_samples
+    return d, exclude_samples, aaf
 
 
 def RestrictSamples(data, samplefile, include=True):
@@ -275,10 +281,13 @@ def AddCovars(data, fname, covar_name, covar_number):
     other_defaults = ["Father_ID", "Mother_ID", "sex", "phenotype"]
     if covar_name:
         colnames = default_cols+covar_name.split(",")
-        cov = pd.read_csv(fname, delim_whitespace=True, usecols=colnames)
+        cov = pd.read_csv(fname, delim_whitespace=True,
+                          usecols=colnames)
     elif covar_number:
         colnames = default_cols+["C"+item for item in covar_number.split(",")]
-        cov = pd.read_csv(fname, delim_whitespace=True, names=colnames, usecols=list(range(2))+[1+int(item) for item in covar_number.split(",")])
+        cov = pd.read_csv(fname, delim_whitespace=True,
+                          names=colnames,
+                          usecols=list(range(2))+[1+int(item) for item in covar_number.split(",")])
     else:
         cov = pd.read_csv(fname, delim_whitespace=True)
         if "FID" not in cov.columns:
@@ -377,7 +386,9 @@ def main():
     if args.sex:
         covarcols.append("sex")
     if args.cohort_pgc:
-        pdata["cohort"] = pdata["FID"].apply(lambda x: x.split("*")[0])
+        pdata["cohort"] = pdata["FID"].apply(lambda x: "_".join(x.split("*")[0].split("_")[1:4]))
+        pdata["cohort"] = pdata["cohort"].astype('category')
+        pdata["cohort"] = pdata['cohort'].cat.codes
         covarcols.append("cohort")
     common.MSG("Loaded %s samples..." % pdata.shape[0])
 
@@ -391,7 +402,9 @@ def main():
 
     # Setup VCF reader
     common.MSG("Set up VCF reader")
-    reader = vcf.Reader(open(args.vcf, "rb"))
+    reader = VCF(args.vcf) #vcf.Reader(open(args.vcf, "rb"))
+    if args.region:
+        reader = reader(args.region) #reader.fetch(args.region)
 
     # Set sample ID to FID_IID to match vcf
     common.MSG("Set up sample info")
@@ -412,6 +425,7 @@ def main():
         else:
             cond_gt = LoadCondition(args.vcf, args.condition, sample_order)
         pdata["condition"] = cond_gt[0]
+        pdata.to_csv("as3mt.phenotype.txt", index=False)
         covarcols.append("condition")
 
     # Prepare output file
@@ -423,17 +437,17 @@ def main():
 
     # Perform association test for each record
     common.MSG("Perform associations... with covars %s" % str(covarcols))
-    if args.region:
-        reader = reader.fetch(args.region)
+
     for record in reader:
         if record.call_rate == 0:
             continue
 
-        # Check MAF
-        aaf = sum(record.aaf)
+        aaf = record.aaf
         aaf = min([aaf, 1-aaf])
-        if aaf < args.minmaf and args.minmaf != 1:
-            continue
+        if len(record.ALT) == 1:
+            if aaf < args.minmaf and args.minmaf != 1:
+                continue
+
         # Infer whether we should treat as a SNP or STR
         is_str = True  # by default, assume all data is STRs
         if args.infer_snpstr:
@@ -444,7 +458,7 @@ def main():
                 continue
         # Extract genotypes in sample order, perform regression, and output
         common.MSG("   Load genotypes...")
-        gts, exclude_samples = LoadGT(record, sample_order, is_str=is_str, rmrare=args.remove_rare_str_alleles, use_gp=args.use_gp)
+        gts, exclude_samples, aaf = LoadGT(record, sample_order, is_str=is_str, rmrare=args.remove_rare_str_alleles, use_gp=args.use_gp, vcf_samples = reader.samples)
         pdata["GT"] = gts
         pdata["intercept"] = 1
         minmaf = args.minmaf
@@ -462,7 +476,7 @@ def main():
         if is_str and args.allele_tests:
             alleles = [record.REF]+record.ALT
             for i in range(len(record.ALT)+1):
-                gts, exclude_samples = LoadGT(record, sample_order, is_str=True, use_alt_num=i)
+                gts, exclude_samples, aaf = LoadGT(record, sample_order, is_str=True, use_alt_num=i, vcf_samples = reader.samples)
                 pdata["GT"] = gts
                 if pdata.shape[0] == 0:
                     continue
@@ -475,8 +489,8 @@ def main():
                 OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, alt=alleles[i], name=record.ID))
         if is_str and args.allele_tests_length:
             for length in set([len(record.REF)] + [len(alt) for alt in record.ALT]):
-                gts, exclude_samples = LoadGT(
-                    record, sample_order, is_str=True, use_alt_length=length)
+                gts, exclude_samples, aaf = LoadGT(
+                    record, sample_order, is_str=True, use_alt_length=length, vcf_samples = reader.samples)
                 pdata["GT"] = gts
                 if pdata.shape[0] == 0:
                     continue

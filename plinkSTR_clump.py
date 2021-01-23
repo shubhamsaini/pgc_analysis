@@ -39,7 +39,7 @@ def main():
     parser.add_argument("--clump-r2", help="LD threshold for clumping", required=True, type=str)
     parser.add_argument("--clump-kb", help="Physical distance threshold for clumping (kb)", required=True, type=str)
     parser.add_argument("--assoc", help="Association Results from plinkSTR", required=True, type=str)
-    parser.add_argument("--vcf", help="VCF File", required=True, type=str)
+    parser.add_argument("--vcf", help="VCF File", required=False, type=str)
     parser.add_argument("--out", help="Output file name. Default: stdout", required=False, type=str)
     parser.add_argument("--region", help="Region", required=False, type=str)
     args = parser.parse_args()
@@ -86,46 +86,49 @@ def main():
         end = int(index_str_bp + CLUMP_KB)
         curr_assoc_results = assoc_results[(assoc_results['BP']>=start) & (assoc_results['BP']<=end) & (assoc_results['keep']==-1)]
         if curr_assoc_results.shape[0] == 0:
-            #PrintLine('No STRs to clump with the index STR %d:%d'%(chrom,index_str_bp), outf)
             PrintLine('%d %s %d %s %d NONE'%(chrom, index_str_id, index_str_bp, str(index_str_pmin), len(strs_discard)), outf)
             continue;
 
-        assoc_ids = curr_assoc_results['SNP'].values.tolist()
-        vcf = VCF(VCF_FILE)
-        index_str_gt = []
-        for v in vcf('%d:%d-%d'%(chrom,index_str_bp,index_str_bp)):
-            if str(v.ID) != index_str_id:
-                #PrintLine('Index STR %s not found in VCF file'%(index_str_id), outf)
-                continue
-            str_gt = []
-            for gt in v.gt_bases:
-                str_gt.append(np.sum([len(i)-len(v.REF) for i in gt.split("|")]))
-            index_str_gt = str_gt
 
-        vcf = VCF(VCF_FILE)
-        vcf_strids = []
-        for v in vcf('%d:%d-%d'%(chrom,start,end)):
-            if str(v.ID) == index_str_id:
-                continue
-	    else:
-		str_gt = []
-                gt_array = []
-                if str(v.ID) in assoc_ids:
-                    	vcf_strids.append(str(v.ID))
-                    	if CLUMP_R2 == 0:
-				strs_discard.append(str(v.ID))
-			else:
-				for gt in v.gt_bases:
-                        		str_gt.append(np.sum([len(i)-len(v.REF) for i in gt.split("|")]))
-                    		corr_matrix = np.corrcoef(str_gt,index_str_gt)[0,1] ** 2
-                    		if corr_matrix < CLUMP_R2:
-                        		strs_retain.append(str(v.ID))
-                    		else:
-                        		strs_discard.append(str(v.ID))
+        if CLUMP_R2 == 0:
+            strs_discard = list(curr_assoc_results['SNP'].values)
+            assoc_results.loc[assoc_results['SNP'].isin(strs_discard),'keep'] = 0
+            PrintLine('%d %s %d %s %d %s'%(chrom, index_str_id, index_str_bp, str(index_str_pmin), len(strs_discard), ",".join(strs_discard)), outf)
+        else:
+            assoc_ids = curr_assoc_results['SNP'].values.tolist()
+            vcf = VCF(VCF_FILE)
+            index_str_gt = []
+            for v in vcf('%d:%d-%d'%(chrom,index_str_bp,index_str_bp)):
+                if str(v.ID) != index_str_id:
+                    continue
+                str_gt = []
+                for gt in v.gt_bases:
+                    str_gt.append(np.sum([len(i)-len(v.REF) for i in gt.split("|")]))
+                index_str_gt = str_gt
+
+            vcf = VCF(VCF_FILE)
+            vcf_strids = []
+            for v in vcf('%d:%d-%d'%(chrom,start,end)):
+                if str(v.ID) == index_str_id:
+                    continue
+                else:
+                    str_gt = []
+                    gt_array = []
+                    if str(v.ID) in assoc_ids:
+                        vcf_strids.append(str(v.ID))
+                        if CLUMP_R2 == 0:
+                            strs_discard.append(str(v.ID))
+                        else:
+                            for gt in v.gt_bases:
+                                str_gt.append(np.sum([len(i)-len(v.REF) for i in gt.split("|")]))
+                            corr_matrix = np.corrcoef(str_gt,index_str_gt)[0,1] ** 2
+                            if corr_matrix < CLUMP_R2:
+                                strs_retain.append(str(v.ID))
+                            else:
+                                strs_discard.append(str(v.ID))
 
 
-        assoc_results.loc[assoc_results['SNP'].isin(strs_discard),'keep'] = 0
-        PrintLine('%d %s %d %s %d %s'%(chrom, index_str_id, index_str_bp, str(index_str_pmin), len(strs_discard), ",".join(strs_discard)), outf)
-
+            assoc_results.loc[assoc_results['SNP'].isin(strs_discard),'keep'] = 0
+            PrintLine('%d %s %d %s %d %s'%(chrom, index_str_id, index_str_bp, str(index_str_pmin), len(strs_discard), ",".join(strs_discard)), outf)
 if __name__ == "__main__":
     main()
