@@ -194,7 +194,6 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
     gtdata = {}
     exclude_samples = []
     alleles = [record.REF]+record.ALT
-    #afreqs = [(1-sum(record.aaf))]+record.aaf
     genotypes = np.array(record.genotypes)[:,0:2]
 
     acounts = Counter(genotypes.flatten())
@@ -202,49 +201,54 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
     aaf = sum(afreqs[1:])
     aaf = min([aaf, 1-aaf])
 
-    if use_gp is True:
+    if not is_str: # bi-allelic SNP
+        try:
+            genotypes = 1-genotypes
+            geno_sum = np.sum(genotypes, axis=1)
+            gtdata = dict(zip(vcf_samples, geno_sum))
+        except:
+            gtdata = dict(zip(vcf_samples, [0]*len(vcf_samples)))
+    elif use_gp is True:
         from itertools import combinations_with_replacement
         alleles_lengths = [len(record.REF)]+[len(i) for i in record.ALT]
-        comb = list(combinations_with_replacement(
-            range(len(alleles_lengths)), 2))
-    for sample in range(len(vcf_samples)):
-        if not is_str:  # Note, code opposite to match plink results
+        comb = list(combinations_with_replacement(range(len(alleles_lengths)), 2))
+        idx = [gp_position(genotype[0], genotype[1]) for genotype in comb]
+        geno_sum_lengths = [(alleles_lengths[genotype[0]] + alleles_lengths[genotype[1]]) for genotype in comb]
+        geno_sum_lengths_sorted = [geno_sum_lengths[i] for i in idx]
+
+        gp_sum = np.dot(geno_sum_lengths_sorted, record.format('GP').T)
+        gtdata = dict(zip(vcf_samples, gp_sum))
+    elif use_alt_num > -1:
+        try:
+            genotypes = (genotypes==use_alt_num).astype(int)
+            geno_sum = np.sum(genotypes, axis=1)
+            gtdata = dict(zip(vcf_samples, geno_sum))
+        except:
+            gtdata = dict(zip(vcf_samples, [0]*len(vcf_samples)))
+    elif use_alt_length > -1:
+        try:
+            alleles_lengths = [len(record.REF)] + [len(i) for i in record.ALT]
+            allele_ind = range(len(alleles_lengths))
+            alleles_dict = dict(zip(allele_ind, alleles_lengths))
+            alt_num = [i for i in allele_ind if alleles_dict[i]==use_alt_length]
+            genotypes = np.isin(genotypes, alt_num).astype(int)
+            geno_sum = np.sum(genotypes, axis=1)
+            gtdata = dict(zip(vcf_samples, geno_sum))
+        except:
+            gtdata = dict(zip(vcf_samples, [0]*len(vcf_samples)))
+    else:
+        for sample in range(len(vcf_samples)):
             try:
-                gtdata[vcf_samples[sample]] = sum([1-int(item) for item in genotypes[sample]])
-            except:
-                gtdata[vcf_samples[sample]] = 0
-                exclude_samples.append(vcf_samples[sample])
-        else:
-            if use_alt_num > -1:
-                try:
-                    sumAlleles = sum([int(int(item) == use_alt_num) for item in genotypes[sample]])
-                except:
-                    sumAlleles = 0
+                f1, f2 = [afreqs[int(item)] for item in genotypes[sample]]
+                if f1 < rmrare or f2 < rmrare:
                     exclude_samples.append(vcf_samples[sample])
-                gtdata[vcf_samples[sample]] = sumAlleles
-            elif use_alt_length > -1:
-                try:
-                    sumAllelesLen = sum(
-                        [int(len(alleles[int(item)]) == use_alt_length) for item in genotypes[sample]])
-                except:
-                    sumAllelesLen = 0
-                    exclude_samples.append(vcf_samples[sample])
-                gtdata[vcf_samples[sample]] = sumAllelesLen
-            else:
-                if use_gp is True:
-                    gtdata[vcf_samples[sample]] = sum([(alleles_lengths[genotype[0]] + alleles_lengths[genotype[1]]) * record.format('GP')[gp_position(genotype[0], genotype[1])] for genotype in comb])
+                    gtdata[vcf_samples[sample]] = sum([len(record.REF) for item in genotypes[sample]])
                 else:
-                    try:
-                        f1, f2 = [afreqs[int(item)] for item in genotypes[sample]]
-                        if f1 < rmrare or f2 < rmrare:
-                            exclude_samples.append(vcf_samples[sample])
-                            gtdata[vcf_samples[sample]] = sum([len(record.REF) for item in genotypes[sample]])
-                        else:
-                            gtdata[vcf_samples[sample]] = sum([len(alleles[int(item)]) for item in genotypes[sample]])
-                    except:
-                        f1, f2 = [0, 0]
-                        exclude_samples.append(vcf_samples[sample])
-                        gtdata[vcf_samples[sample]] = 2*len(record.REF)
+                    gtdata[vcf_samples[sample]] = sum([len(alleles[int(item)]) for item in genotypes[sample]])
+            except:
+                f1, f2 = [0, 0]
+                exclude_samples.append(vcf_samples[sample])
+                gtdata[vcf_samples[sample]] = 2*len(record.REF)
 
     d = [gtdata[s] for s in sample_order]
     return d, exclude_samples, aaf
@@ -489,8 +493,7 @@ def main():
                 OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, alt=alleles[i], name=record.ID))
         if is_str and args.allele_tests_length:
             for length in set([len(record.REF)] + [len(alt) for alt in record.ALT]):
-                gts, exclude_samples, aaf = LoadGT(
-                    record, sample_order, is_str=True, use_alt_length=length, vcf_samples = reader.samples)
+                gts, exclude_samples, aaf = LoadGT(record, sample_order, is_str=True, use_alt_length=length, vcf_samples = reader.samples)
                 pdata["GT"] = gts
                 if pdata.shape[0] == 0:
                     continue
