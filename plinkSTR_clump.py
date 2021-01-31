@@ -38,6 +38,7 @@ def main():
     parser.add_argument("--clump-p2", help="Secondary significance threshold for clumped SNPs", required=True, type=str)
     parser.add_argument("--clump-r2", help="LD threshold for clumping", required=True, type=str)
     parser.add_argument("--clump-kb", help="Physical distance threshold for clumping (kb)", required=True, type=str)
+    parser.add_argument("--maf", help="Minor Allele Frequency (MAF)", required=False, type=float)
     parser.add_argument("--assoc", help="Association Results from plinkSTR", required=True, type=str)
     parser.add_argument("--vcf", help="VCF File", required=False, type=str)
     parser.add_argument("--out", help="Output file name. Default: stdout", required=False, type=str)
@@ -59,6 +60,9 @@ def main():
     PrintLine("CHR SNP BP P TOTAL SP2", outf)
 
     assoc_results = pd.read_csv(ASSOC_FILE, delim_whitespace=True)
+
+    if args.maf:
+        assoc_results = assoc_results[assoc_results['MAF'] > args.maf]
     assoc_results['keep'] = 0
     assoc_results['P'] = pd.to_numeric(assoc_results['P'],errors='coerce')
     assoc_results.loc[assoc_results['P'] < CLUMP_P2,'keep'] = 2

@@ -177,7 +177,7 @@ def PerformAssociation(data, covarcols, case_control=False, quant=True, maf=1.0,
     return assoc
 
 
-def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1, rmrare=0, use_gp=False, vcf_samples = None):
+def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1, rmrare=0, use_gp=False, vcf_samples = None, iqr_outliers=False):
     """
     Load genotypes from a record and return values in the sample order
     Input:
@@ -218,6 +218,14 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
 
         gp_sum = np.dot(geno_sum_lengths_sorted, record.format('GP').T)
         gtdata = dict(zip(vcf_samples, gp_sum))
+
+        if iqr_outliers:
+            q75, q25 = np.percentile(gp_sum, [75 ,25])
+            iqr = q75 - q25
+            low_threshold = q25 - (1.5*iqr)
+            high_threshold = q75 + (1.5*iqr)
+            exclude_samples = [sample for sample in gtdata if (gtdata[sample]>high_threshold or gtdata[sample]<low_threshold)]
+
     elif use_alt_num > -1:
         try:
             genotypes = (genotypes==use_alt_num).astype(int)
@@ -358,6 +366,7 @@ def main():
     assoc_group.add_argument("--remove-rare-str-alleles", help="Remove genotypes with alleles less than this freq", default=0.0, type=float)
     assoc_group.add_argument("--max-iter", help="Maximum number of iterations for logistic regression", default=100, type=int)
     assoc_group.add_argument("--use-gp", help="Use GP field from Beagle output", action="store_true")
+    assoc_group.add_argument("--iqr-outliers", help="Filter outliers using IQR (GP-based regression only)", action="store_true")
     fm_group = parser.add_argument_group("Fine mapping")
     fm_group.add_argument("--condition", help="Condition on this position chrom:start", type=str)
     fm_group.add_argument("--condition-file", help="Load Condition from this file", type=str)
@@ -406,7 +415,8 @@ def main():
 
     # Setup VCF reader
     common.MSG("Set up VCF reader")
-    reader = VCF(args.vcf) #vcf.Reader(open(args.vcf, "rb"))
+    reader = VCF(args.vcf)
+    samples_list = reader.samples
     if args.region:
         reader = reader(args.region) #reader.fetch(args.region)
 
@@ -416,7 +426,7 @@ def main():
         pdata["sample"] = pdata.apply(lambda x: x["FID"]+args.vcf_samples_delim+x["IID"], 1)
     else:
         pdata["sample"] = pdata.apply(lambda x: x["IID"], 1)
-    reader_samples = set(reader.samples)
+    reader_samples = set(samples_list)
     pdata = pdata[pdata["sample"].apply(lambda x: x in reader_samples)]
     sample_order = list(pdata["sample"])
     pdata = pdata[["phenotype", "sample"]+covarcols]
@@ -462,7 +472,7 @@ def main():
                 continue
         # Extract genotypes in sample order, perform regression, and output
         common.MSG("   Load genotypes...")
-        gts, exclude_samples, aaf = LoadGT(record, sample_order, is_str=is_str, rmrare=args.remove_rare_str_alleles, use_gp=args.use_gp, vcf_samples = reader.samples)
+        gts, exclude_samples, aaf = LoadGT(record, sample_order, is_str=is_str, rmrare=args.remove_rare_str_alleles, use_gp=args.use_gp, vcf_samples = samples_list, iqr_outliers = args.iqr_outliers)
         pdata["GT"] = gts
         pdata["intercept"] = 1
         minmaf = args.minmaf
@@ -480,7 +490,7 @@ def main():
         if is_str and args.allele_tests:
             alleles = [record.REF]+record.ALT
             for i in range(len(record.ALT)+1):
-                gts, exclude_samples, aaf = LoadGT(record, sample_order, is_str=True, use_alt_num=i, vcf_samples = reader.samples)
+                gts, exclude_samples, aaf = LoadGT(record, sample_order, is_str=True, use_alt_num=i, vcf_samples = samples_list)
                 pdata["GT"] = gts
                 if pdata.shape[0] == 0:
                     continue
@@ -493,7 +503,7 @@ def main():
                 OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, alt=alleles[i], name=record.ID))
         if is_str and args.allele_tests_length:
             for length in set([len(record.REF)] + [len(alt) for alt in record.ALT]):
-                gts, exclude_samples, aaf = LoadGT(record, sample_order, is_str=True, use_alt_length=length, vcf_samples = reader.samples)
+                gts, exclude_samples, aaf = LoadGT(record, sample_order, is_str=True, use_alt_length=length, vcf_samples = samples_list)
                 pdata["GT"] = gts
                 if pdata.shape[0] == 0:
                     continue
