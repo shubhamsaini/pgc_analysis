@@ -54,6 +54,7 @@ def main():
         fam_data = pd.read_csv(args.fam, names = ['FID','IID','FATHER','MOTHER','SEX','PHENO'], delim_whitespace=True)
         fam_data['SAMPLE'] = fam_data.apply(lambda x: x["FID"]+"_"+x["IID"], 1)
         fam_data = fam_data[['SAMPLE','PHENO']]
+        fam_data = fam_data[fam_data['SAMPLE'].isin(vcf.samples)]
 
         sorter = vcf.samples
         sorterIndex = dict(zip(sorter, range(len(sorter))))
