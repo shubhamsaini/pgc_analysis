@@ -15,6 +15,8 @@ from itertools import combinations_with_replacement
 import matplotlib.pyplot as plt
 import pandas as pd
 from collections import Counter
+import seaborn as sns
+sns.set_style("whitegrid")
 
 def gp_position(j, k):
     p1 = (k*(k+1)/2)+j
@@ -94,21 +96,23 @@ def main():
 
         df = pd.DataFrame({"x" : gp_sum,"class" : fam})
 
-        _, edges = np.histogram(df["x"], bins='auto')
-        histdata = []; labels=[]
-        for n, group in df.groupby("class"):
-            histdata.append(np.histogram(group["x"], bins=edges)[0])
-            labels.append(n)
+        # _, edges = np.histogram(df["x"], bins='auto')
+        # histdata = []; labels=[]
+        # for n, group in df.groupby("class"):
+        #     histdata.append(np.histogram(group["x"], bins=edges)[0])
+        #     labels.append(n)
+        #
+        # hist = np.array(histdata)
+        # histcum = np.cumsum(hist,axis=0)
+        #
+        # plt.bar(edges[:-1],hist[0,:], width=np.diff(edges)[0],
+        #             label=labels[0], align="edge")
+        #
+        # for i in range(1,len(hist)):
+        #     plt.bar(edges[:-1],hist[i,:], width=np.diff(edges)[0],
+        #             bottom=histcum[i-1,:],label=labels[i], align="edge")
 
-        hist = np.array(histdata)
-        histcum = np.cumsum(hist,axis=0)
-
-        plt.bar(edges[:-1],hist[0,:], width=np.diff(edges)[0],
-                    label=labels[0], align="edge")
-
-        for i in range(1,len(hist)):
-            plt.bar(edges[:-1],hist[i,:], width=np.diff(edges)[0],
-                    bottom=histcum[i-1,:],label=labels[i], align="edge")
+        sns.histplot(data=df, x="x", hue="class", palette=['red','blue'], legend=True)
 
 
         plt.axvline(low_threshold, color='red', linestyle='dashed')
@@ -118,8 +122,11 @@ def main():
         plt.text(high_threshold+0.01, max_ylim*0.95, 'Q3 + 1.5IQR')
         plt.text(low_threshold+0.01, max_ylim*0.95, 'Q1 - 1.5IQR')
 
-        plt.legend(title="class")
-        plt.title('chr%d:%d'%(args.chrom, args.pos))
+        #plt.legend(title="class")
+        if args.out_prefix:
+            plt.title('%s chr%d:%d'%(args.out_prefix, args.chrom, args.pos))
+        else:
+            plt.title('chr%d:%d'%(args.chrom, args.pos))
         if args.out_prefix:
             plt.savefig('%s.chr%d.%d.dosage.pheno.png'%(args.out_prefix,args.chrom, args.pos))
         else:
