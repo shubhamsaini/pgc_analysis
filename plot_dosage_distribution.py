@@ -76,7 +76,7 @@ def main():
         idx = [gp_position(genotype[0], genotype[1]) for genotype in comb]
         geno_sum_lengths = [(alleles_lengths[genotype[0]] + alleles_lengths[genotype[1]]) for genotype in comb]
         geno_sum_lengths_sorted = [geno_sum_lengths[i] for i in idx]
-        gp_sum = np.sort(np.dot(geno_sum_lengths_sorted, record.format('GP').T))
+        gp_sum = np.dot(geno_sum_lengths_sorted, record.format('GP').T)
 
         q75, q25 = np.percentile(gp_sum, [75 ,25])
         iqr = q75 - q25
