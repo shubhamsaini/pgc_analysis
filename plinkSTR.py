@@ -49,6 +49,18 @@ def gp_position(j, k):
     p2 = (j*(j+1)/2)+k
     return int(max(p1, p2))
 
+def replace_allele_idx(numbers, problem_numbers, alternative_numbers):
+    numbers = np.asarray(numbers)
+    problem_numbers = np.asarray(problem_numbers)
+    alternative_numbers = np.asarray(alternative_numbers)
+    n_min, n_max = numbers.min(), numbers.max()
+    replacer = np.arange(n_min, n_max + 1)
+    # Mask replacements out of range
+    mask = (problem_numbers >= n_min) & (problem_numbers <= n_max)
+    replacer[problem_numbers[mask] - n_min] = alternative_numbers[mask]
+    numbers = replacer[numbers - n_min]
+    return numbers
+
 
 def LoadCondition(vcffile, condition, sample_order):
     reader2 = VCF(vcffile)
@@ -177,7 +189,7 @@ def PerformAssociation(data, covarcols, case_control=False, quant=True, maf=1.0,
     return assoc
 
 
-def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1, rmrare=0, use_gp=False, vcf_samples = None, iqr_outliers=False):
+def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1, rmrare=0, use_gp=False, vcf_samples = None, iqr_outliers=False, iqr_outliers_min_samples=100):
     """
     Load genotypes from a record and return values in the sample order
     Input:
@@ -224,7 +236,19 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
             iqr = q75 - q25
             low_threshold = q25 - (1.5*iqr)
             high_threshold = q75 + (1.5*iqr)
-            exclude_samples = [sample for sample in gtdata if (gtdata[sample]>high_threshold or gtdata[sample]<low_threshold)]
+
+            if iqr_outliers_min_samples > 0:
+                alleles_idx = list(range(len(alleles_lengths)))
+                genotypes_lenghts = replace_allele_idx(genotypes, alleles_idx, alleles_lengths)
+                genotypes_lenghts = np.sum(genotypes_lenghts, axis=1)
+                gt_counts = Counter(genotypes_lenghts)
+                valid_gt_counts = [i for i in gt_counts if gt_counts[i] > iqr_outliers_min_samples]
+                min_gt_counts = min(valid_gt_counts)
+                max_gt_counts = max(valid_gt_counts)
+                low_threshold = min(low_threshold, min_gt_counts)
+                high_threshold = max(high_threshold, max_gt_counts)
+
+            exclude_samples = [sample for sample in gtdata if (gtdata[sample]>=high_threshold or gtdata[sample]<=low_threshold)]
 
     elif use_alt_num > -1:
         try:
@@ -367,6 +391,7 @@ def main():
     assoc_group.add_argument("--max-iter", help="Maximum number of iterations for logistic regression", default=100, type=int)
     assoc_group.add_argument("--use-gp", help="Use GP field from Beagle output", action="store_true")
     assoc_group.add_argument("--iqr-outliers", help="Filter outliers using IQR (GP-based regression only)", action="store_true")
+    assoc_group.add_argument("--iqr-outliers-min-samples", help="Minimum number of samples allowed per dosage. Use -1 to disable this.", default=100, type=int)
     fm_group = parser.add_argument_group("Fine mapping")
     fm_group.add_argument("--condition", help="Condition on this position chrom:start", type=str)
     fm_group.add_argument("--condition-file", help="Load Condition from this file", type=str)
@@ -472,7 +497,7 @@ def main():
                 continue
         # Extract genotypes in sample order, perform regression, and output
         common.MSG("   Load genotypes...")
-        gts, exclude_samples, aaf = LoadGT(record, sample_order, is_str=is_str, rmrare=args.remove_rare_str_alleles, use_gp=args.use_gp, vcf_samples = samples_list, iqr_outliers = args.iqr_outliers)
+        gts, exclude_samples, aaf = LoadGT(record, sample_order, is_str=is_str, rmrare=args.remove_rare_str_alleles, use_gp=args.use_gp, vcf_samples = samples_list, iqr_outliers = args.iqr_outliers, iqr_outliers_min_samples = args.iqr_outliers_min_samples)
         pdata["GT"] = gts
         pdata["intercept"] = 1
         minmaf = args.minmaf
