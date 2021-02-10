@@ -168,30 +168,22 @@ def PerformAssociation(data, covarcols, case_control=False, quant=True, maf=1.0,
     rmcovars = []
     for col in covarcols:
         if np.var(data[col])==0: rmcovars.append(col)
-    
+
     if case_control:
         try:
             pgclogit = sm.Logit(data["phenotype"], data[["intercept", "GT"]+[item for item in covarcols if item not in rmcovars]]).fit(
                 disp=0, maxiter=maxiter)
+            assoc["coef"] = "%.3f" % np.exp(pgclogit.params["GT"])
+            assoc["pval"] = "%.2E" % pgclogit.pvalues["GT"]
+            assoc["stderr"] = "%.3f" % (np.exp(pgclogit.params["GT"])*pgclogit.bse["GT"])
+            assoc["CI"] = "-".join(["%.3f" % (np.exp(pgclogit.conf_int().loc["GT", cind])) for cind in [0, 1]])
         except:
             assoc["coef"] = "NA"
             assoc["pval"] = "NA"
             assoc["stderr"] = "NA"
             assoc["CI"] = "NA"
-            return assoc
-        assoc["coef"] = "%.3f" % np.exp(pgclogit.params["GT"])
-        try:
-            assoc["pval"] = "%.2E" % pgclogit.pvalues["GT"]
-            assoc["stderr"] = "%.3f" % (
-                np.exp(pgclogit.params["GT"])*pgclogit.bse["GT"])
-            assoc["CI"] = "-".join(
-                ["%.3f" % (np.exp(pgclogit.conf_int().loc["GT", cind])) for cind in [0, 1]])
-        except:
-            assoc["pval"] = "NA"
-            assoc["stderr"] = "NA"
-            assoc["CI"] = "NA"
     else:
-        return None  # TODO implement linear
+        return None # TODO implement linear
     return assoc
 
 
@@ -511,6 +503,8 @@ def main():
         minmaf = args.minmaf
         common.MSG("   Perform association...")
         assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=aaf, exclude_samples=exclude_samples, maxiter=args.max_iter)
+        if assoc is None:
+            continue
         assoc["REF"] = str(record.REF)
         if not is_str:
             assoc["ALT"] = str(record.ALT[0])
@@ -531,6 +525,8 @@ def main():
                 if allele_maf == 0:
                     continue
                 assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=allele_maf, exclude_samples=exclude_samples, maxiter=args.max_iter)
+                if assoc is None:
+                    continue
                 assoc["REF"] = str(record.REF)
                 assoc["ALT"] = alleles[i]
                 OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, alt=alleles[i], name=record.ID))
@@ -544,6 +540,8 @@ def main():
                 if allele_maf == 0:
                     continue
                 assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=allele_maf, exclude_samples=exclude_samples, maxiter=args.max_iter)
+                if assoc is None:
+                    continue
                 assoc["REF"] = "Length-%d" % (len(str(record.REF)))
                 assoc["ALT"] = "Length-%d" % (length)
                 OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=GetAssocType(is_str, alt_len=length, name=record.ID))
