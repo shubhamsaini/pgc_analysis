@@ -163,9 +163,15 @@ def PerformAssociation(data, covarcols, case_control=False, quant=True, maf=1.0,
     formula = "phenotype ~ GT+"+"+".join(covarcols)
     assoc["maf"] = "%.3f" % maf
     assoc["N"] = data.shape[0]
+
+    # Clean up covars to remove those with no variance
+    rmcovars = []
+    for col in covarcols:
+        if np.var(data[col])==0: rmcovars.append(col)
+    
     if case_control:
         try:
-            pgclogit = sm.Logit(data["phenotype"], data[["intercept", "GT"]+covarcols]).fit(
+            pgclogit = sm.Logit(data["phenotype"], data[["intercept", "GT"]+[item for item in covarcols if item not in rmcovars]]).fit(
                 disp=0, maxiter=maxiter)
         except:
             assoc["coef"] = "NA"
@@ -426,8 +432,10 @@ def main():
     if args.cohort_pgc:
         pdata["cohort"] = pdata["FID"].apply(lambda x: "_".join(x.split("*")[0].split("_")[1:4]))
         pdata["cohort"] = pdata["cohort"].astype('category')
-        pdata["cohort"] = pdata['cohort'].cat.codes
-        covarcols.append("cohort")
+        cohortdata = pd.get_dummies(pdata["cohort"])
+        for col in cohortdata.columns:
+            pdata[col] = cohortdata[col]
+            covarcols.append(col)
     common.MSG("Loaded %s samples..." % pdata.shape[0])
 
     # Include/exclude samples
