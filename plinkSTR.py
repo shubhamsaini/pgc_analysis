@@ -94,7 +94,10 @@ def GetAssocType(is_str, alt=-1, alt_len=-1, name=None):
     Return string describing association type
     """
     if not is_str:
-        return "SNP"
+        if not name is None:
+            return name
+        else:
+            return "SNP"
     else:
         if alt != -1:
             return "%s-alt-%s" % (name, alt)
@@ -215,9 +218,12 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
         try:
             genotypes = 1-genotypes
             geno_sum = np.sum(genotypes, axis=1)
+            missing_samples_idx = list(np.argwhere(geno_sum>2)[:,0])
+            exclude_samples = [vcf_samples[i] for i in missing_samples_idx]
             gtdata = dict(zip(vcf_samples, geno_sum))
         except:
             gtdata = dict(zip(vcf_samples, [0]*len(vcf_samples)))
+            exclude_samples = vcf_samples
     elif use_gp is True:
         from itertools import combinations_with_replacement
         alleles_lengths = [len(record.REF)]+[len(i) for i in record.ALT]
