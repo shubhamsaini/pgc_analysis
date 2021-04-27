@@ -62,12 +62,13 @@ def replace_allele_idx(numbers, problem_numbers, alternative_numbers):
     return numbers
 
 
-def LoadCondition(vcffile, condition, sample_order):
+
+def LoadCondition(vcffile, condition, sample_order, rmrare=0, use_gp=False, iqr_outliers=False, iqr_outliers_min_samples=100):
     reader2 = VCF(vcffile)
+    reader2_samples = reader2.samples
     #reader2 = vcf.Reader(open(vcffile, "rb"))
     chrom, start = condition.split(":")
     region = "%s:%s-%s" % (chrom, start, int(start)+1)
-    reader2.fetch(region)
     reader2 = reader2(region)
     for record in reader2:
         print(record.start, int(start), record.ID)
@@ -75,7 +76,8 @@ def LoadCondition(vcffile, condition, sample_order):
             is_str = True
             if len(record.REF) == 1 and len(record.ALT) == 1 and len(record.ALT[0]) == 1:
                 is_str = False
-            return LoadGT(record, sample_order, is_str=is_str, vcf_samples = reader2.samples)
+            return LoadGT(record, sample_order, is_str=is_str, vcf_samples = reader2_samples, rmrare=rmrare, use_gp=use_gp, iqr_outliers = iqr_outliers, iqr_outliers_min_samples = iqr_outliers_min_samples)
+
     common.ERROR("Could not find SNP to condition on")
 
 
@@ -216,9 +218,9 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
 
     if not is_str: # bi-allelic SNP
         try:
-            genotypes = 1-genotypes
+            #genotypes = 1-genotypes
             geno_sum = np.sum(genotypes, axis=1)
-            missing_samples_idx = list(np.argwhere(geno_sum>2)[:,0])
+            missing_samples_idx = list(np.argwhere(geno_sum>2)[:,0]) + list(np.argwhere(geno_sum<0)[:,0])
             exclude_samples = [vcf_samples[i] for i in missing_samples_idx]
             gtdata = dict(zip(vcf_samples, geno_sum))
         except:
@@ -230,7 +232,9 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
         comb = list(combinations_with_replacement(range(len(alleles_lengths)), 2))
         idx = [gp_position(genotype[0], genotype[1]) for genotype in comb]
         geno_sum_lengths = [(alleles_lengths[genotype[0]] + alleles_lengths[genotype[1]]) for genotype in comb]
-        geno_sum_lengths_sorted = [geno_sum_lengths[i] for i in idx]
+        geno_sum_lengths_dict = dict(zip(idx, geno_sum_lengths))
+        geno_sum_lengths_sorted = [geno_sum_lengths_dict[i] for i in sorted(geno_sum_lengths_dict)]
+        #geno_sum_lengths_sorted = [geno_sum_lengths[i] for i in idx]
 
         gp_sum = np.dot(geno_sum_lengths_sorted, record.format('GP').T)
         gtdata = dict(zip(vcf_samples, gp_sum))
@@ -247,10 +251,11 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
                 genotypes_lenghts = np.sum(genotypes_lenghts, axis=1)
                 gt_counts = Counter(genotypes_lenghts)
                 valid_gt_counts = [i for i in gt_counts if gt_counts[i] > iqr_outliers_min_samples]
-                min_gt_counts = min(valid_gt_counts)
-                max_gt_counts = max(valid_gt_counts)
-                low_threshold = min(low_threshold, min_gt_counts)
-                high_threshold = max(high_threshold, max_gt_counts)
+                if len(valid_gt_counts) > 0:
+                    min_gt_counts = min(valid_gt_counts)
+                    max_gt_counts = max(valid_gt_counts)
+                    low_threshold = min(low_threshold, min_gt_counts)
+                    high_threshold = max(high_threshold, max_gt_counts)
 
             exclude_samples = [sample for sample in gtdata if (gtdata[sample]>=high_threshold or gtdata[sample]<=low_threshold)]
 
@@ -273,18 +278,15 @@ def LoadGT(record, sample_order, is_str=True, use_alt_num=-1, use_alt_length=-1,
         except:
             gtdata = dict(zip(vcf_samples, [0]*len(vcf_samples)))
     else:
-        for sample in range(len(vcf_samples)):
-            try:
-                f1, f2 = [afreqs[int(item)] for item in genotypes[sample]]
-                if f1 < rmrare or f2 < rmrare:
-                    exclude_samples.append(vcf_samples[sample])
-                    gtdata[vcf_samples[sample]] = sum([len(record.REF) for item in genotypes[sample]])
-                else:
-                    gtdata[vcf_samples[sample]] = sum([len(alleles[int(item)]) for item in genotypes[sample]])
-            except:
-                f1, f2 = [0, 0]
-                exclude_samples.append(vcf_samples[sample])
-                gtdata[vcf_samples[sample]] = 2*len(record.REF)
+        rare_alleles = [i for i in range(len(afreqs)) if afreqs[i]<rmrare]
+        exclude_samples_idx = np.where(np.sum(np.isin(genotypes, rare_alleles), axis=1)>0)[0]
+        exclude_samples = [vcf_samples[i] for i in exclude_samples_idx]
+
+        alleles_lengths = [len(record.REF)] + [len(i) for i in record.ALT]
+        alleles_idx = list(range(len(alleles_lengths)))
+        genotypes_lenghts = replace_allele_idx(genotypes, alleles_idx, alleles_lengths)
+        geno_sum = np.sum(genotypes_lenghts, axis=1)
+        gtdata = dict(zip(vcf_samples, geno_sum))
 
     d = [gtdata[s] for s in sample_order]
     return d, exclude_samples, aaf
@@ -449,7 +451,7 @@ def main():
     reader = VCF(args.vcf)
     samples_list = reader.samples
     if args.region:
-        reader = reader(args.region) #reader.fetch(args.region)
+        reader = reader(args.region)
 
     # Set sample ID to FID_IID to match vcf
     common.MSG("Set up sample info")
@@ -468,9 +470,8 @@ def main():
         if args.condition_file is not None:
             cond_gt = LoadConditionFromFile(args.condition_file, args.condition, sample_order, args.condition_sample_column)
         else:
-            cond_gt = LoadCondition(args.vcf, args.condition, sample_order)
+            cond_gt = LoadCondition(args.vcf, args.condition, sample_order, rmrare=args.remove_rare_str_alleles, use_gp=args.use_gp, iqr_outliers= args.iqr_outliers, iqr_outliers_min_samples=args.iqr_outliers_min_samples)
         pdata["condition"] = cond_gt[0]
-        pdata.to_csv("as3mt.phenotype.txt", index=False)
         covarcols.append("condition")
 
     # Prepare output file
@@ -498,9 +499,11 @@ def main():
         if args.infer_snpstr:
             if len(record.REF) == 1 and len(record.ALT) == 1 and len(record.ALT[0]) == 1:
                 is_str = False
-            # if is_str and len(record.REF) < MIN_STR_LENGTH: continue # probably an indel
+            if is_str and len(record.ALT) == 1 and ((len(record.REF)<MIN_STR_LENGTH and len(record.ALT[0])==1) or (len(record.REF) == 1 and len(record.ALT[0])<MIN_STR_LENGTH)):
+                is_str = False #probably an indel
             if not is_str and args.str_only:
                 continue
+
         # Extract genotypes in sample order, perform regression, and output
         common.MSG("   Load genotypes...")
         gts, exclude_samples, aaf = LoadGT(record, sample_order, is_str=is_str, rmrare=args.remove_rare_str_alleles, use_gp=args.use_gp, vcf_samples = samples_list, iqr_outliers = args.iqr_outliers, iqr_outliers_min_samples = args.iqr_outliers_min_samples)

@@ -55,7 +55,8 @@ def main():
     if args.fam:
         fam_data = pd.read_csv(args.fam, names = ['FID','IID','FATHER','MOTHER','SEX','PHENO'], delim_whitespace=True)
         fam_data['SAMPLE'] = fam_data.apply(lambda x: x["FID"]+"_"+x["IID"], 1)
-        fam_data = fam_data[['SAMPLE','PHENO']]
+        fam_data['COHORT'] = fam_data['FID'].apply(lambda x: "_".join(x.split("*")[0].split("_")[1:4]))
+        fam_data = fam_data[['SAMPLE','PHENO','COHORT']]
         fam_data = fam_data[fam_data['SAMPLE'].isin(vcf.samples)]
 
         sorter = vcf.samples
@@ -64,7 +65,8 @@ def main():
         fam_data.sort_values(['sample_rank'], ascending = True, inplace = True)
         fam_data.drop('sample_rank', 1, inplace = True)
 
-        fam = list(fam_data['PHENO'].values)
+        #fam = list(fam_data['PHENO'].values)
+        fam = list(fam_data['COHORT'].values)
     else:
         fam = [0]*len(vcf.samples)
 
@@ -75,7 +77,9 @@ def main():
         comb = list(combinations_with_replacement(range(len(alleles_lengths)), 2))
         idx = [gp_position(genotype[0], genotype[1]) for genotype in comb]
         geno_sum_lengths = [(alleles_lengths[genotype[0]] + alleles_lengths[genotype[1]]) for genotype in comb]
-        geno_sum_lengths_sorted = [geno_sum_lengths[i] for i in idx]
+        geno_sum_lengths_dict = dict(zip(idx, geno_sum_lengths))
+        geno_sum_lengths_sorted = [geno_sum_lengths_dict[i] for i in sorted(geno_sum_lengths_dict)]
+        #geno_sum_lengths_sorted = [geno_sum_lengths[i] for i in idx]
         gp_sum = np.dot(geno_sum_lengths_sorted, record.format('GP').T)
 
         q75, q25 = np.percentile(gp_sum, [75 ,25])
@@ -112,7 +116,7 @@ def main():
         #     plt.bar(edges[:-1],hist[i,:], width=np.diff(edges)[0],
         #             bottom=histcum[i-1,:],label=labels[i], align="edge")
 
-        sns.histplot(data=df, x="x", hue="class", palette=['red','blue'], legend=True)
+        sns.histplot(data=df, x="x", hue="class", legend=False)
 
 
         plt.axvline(low_threshold, color='red', linestyle='dashed')
