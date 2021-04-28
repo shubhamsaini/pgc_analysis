@@ -399,7 +399,7 @@ def main():
     assoc_group.add_argument("--iqr-outliers", help="Filter outliers using IQR (GP-based regression only)", action="store_true")
     assoc_group.add_argument("--iqr-outliers-min-samples", help="Minimum number of samples allowed per dosage. Use -1 to disable this.", default=100, type=int)
     fm_group = parser.add_argument_group("Fine mapping")
-    fm_group.add_argument("--condition", help="Condition on this position chrom:start", type=str)
+    fm_group.add_argument("--condition", help="Condition on this position chrom:start. For conditoning on multiple variants, supply a comma separated list of chrom:start", type=str)
     fm_group.add_argument("--condition-file", help="Load Condition from this file", type=str)
     fm_group.add_argument("--condition-sample-column", help="Column name for samples in the condition file", type=str)
     args = parser.parse_args()
@@ -469,10 +469,14 @@ def main():
     if args.condition is not None:
         if args.condition_file is not None:
             cond_gt = LoadConditionFromFile(args.condition_file, args.condition, sample_order, args.condition_sample_column)
+            pdata["condition"] = cond_gt[0]
+            covarcols.append("condition")
         else:
-            cond_gt = LoadCondition(args.vcf, args.condition, sample_order, rmrare=args.remove_rare_str_alleles, use_gp=args.use_gp, iqr_outliers= args.iqr_outliers, iqr_outliers_min_samples=args.iqr_outliers_min_samples)
-        pdata["condition"] = cond_gt[0]
-        covarcols.append("condition")
+            condition_list = args.condition.split(",")
+            for cond_num in range(len(condition_list)):
+                cond_gt = LoadCondition(args.vcf, condition_list[cond_num], sample_order, rmrare=args.remove_rare_str_alleles, use_gp=args.use_gp, iqr_outliers= args.iqr_outliers, iqr_outliers_min_samples=args.iqr_outliers_min_samples)
+                pdata["condition_%d"%(cond_num)] = cond_gt[0]
+                covarcols.append("condition_%d"%(cond_num))
 
     # Prepare output file
     if args.out == "stdout":
