@@ -23,6 +23,8 @@ Example - PGC:
 
 # Constants
 from collections import Counter
+from collections import defaultdict
+from itertools import product
 from cyvcf2 import VCF
 import statsmodels.api as sm
 from statsmodels.formula.api import logit
@@ -167,7 +169,6 @@ def PerformAssociation(data, covarcols, case_control=False, quant=True, maf=1.0,
         return None
 
     assoc = {}
-    formula = "phenotype ~ GT+"+"+".join(covarcols)
     assoc["maf"] = "%.3f" % maf
     assoc["N"] = data.shape[0]
 
@@ -178,8 +179,7 @@ def PerformAssociation(data, covarcols, case_control=False, quant=True, maf=1.0,
 
     if case_control:
         try:
-            pgclogit = sm.Logit(data["phenotype"], data[["intercept", "GT"]+[item for item in covarcols if item not in rmcovars]]).fit(
-                disp=0, maxiter=maxiter)
+            pgclogit = sm.Logit(data["phenotype"], data[["intercept", "GT"]+[item for item in covarcols if item not in rmcovars]]).fit(disp=0, maxiter=maxiter)
             assoc["coef"] = "%.3f" % np.exp(pgclogit.params["GT"])
             assoc["pval"] = "%.2E" % pgclogit.pvalues["GT"]
             assoc["stderr"] = "%.3f" % (np.exp(pgclogit.params["GT"])*pgclogit.bse["GT"])
@@ -510,29 +510,41 @@ def main():
                 snp_id.append(str(record.ID))
                 variant_hap = []
                 for x in record.genotypes:
-                    if ('.' in x):
-                        variant_hap = variant_hap + ['NA']
+                    if ('.' in x or '-1' in x or -1 in x):
+                        variant_hap = variant_hap + ['.', '.']
                     else:
-                        variant_hap = variant_hap + [x[0] + x[1]]
+                        variant_hap = variant_hap + [x[0], x[1]]
                 snp_hap.append(variant_hap)
 
-        snp_matrix = pd.DataFrame([snp_hap[i] for i in range(len(snp_hap))], columns = samples_list)
+        snp_matrix = pd.DataFrame([snp_hap[i] for i in range(len(snp_hap))], columns = ["".join(i) for i in list(product(samples_list, ["_1","_2"]))])
         snp_matrix.index = snp_id
         snp_matrix = snp_matrix.T
 
-        snp_haplotypes = np.array(["".join([str(i) for i in snp_matrix.values[j]]) for j in range(snp_matrix.shape[0])])
-        unique_haplotypes = np.unique(snp_haplotypes)
-        unique_haplotypes_dict = dict(zip(list(unique_haplotypes), range(unique_haplotypes.shape[0])))
-        gtdata = dict(zip(list(snp_matrix.index), [unique_haplotypes_dict[i] for i in snp_haplotypes]))
-        exclude_samples = []
-        aaf = 0.05
+        per_sample_hapdata = {}
+        unique_haplotypes = defaultdict(int)
+        for sample in samples_list:
+            hap_1 = "".join(snp_matrix.loc[sample+'_1'].astype('str').values)
+            hap_2 = "".join(snp_matrix.loc[sample+'_2'].astype('str').values)
+            per_sample_hapdata[sample] = [hap_1, hap_2]
+            unique_haplotypes[hap_1] += 1
+            unique_haplotypes[hap_2] += 1
 
-        pdata["GT"] = [gtdata[s] for s in sample_order]
+        exclude_samples = []
         pdata["intercept"] = 1
-        assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=aaf, exclude_samples=exclude_samples, maxiter=args.max_iter)
-        assoc["REF"] = "REF"
-        assoc["ALT"] = "ALT"
-        OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=",".join(snp_id))
+
+        for haplotype in unique_haplotypes:
+            gtdata = {}
+            aaf = unique_haplotypes[haplotype] / sum(list(unique_haplotypes.values()))
+            if aaf < 0.01:
+                continue
+            for sample in per_sample_hapdata:
+                gtdata[sample] = sum([int(i==haplotype) for i in per_sample_hapdata[sample]])
+
+            pdata["GT"] = [gtdata[s] for s in sample_order]
+            assoc = PerformAssociation(pdata, covarcols, case_control=args.logistic, quant=args.linear, maf=aaf, exclude_samples=exclude_samples, maxiter=args.max_iter)
+            assoc["REF"] = "REF"
+            assoc["ALT"] = "haplotype-%s"%haplotype
+            OutputAssoc(record.CHROM, record.POS, assoc, outf, assoc_type=",".join(snp_id))
 
     else:
         for record in reader:
